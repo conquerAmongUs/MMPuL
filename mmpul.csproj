@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>MultiModePublicLobby</AssemblyName>
+    <Description>bla bla bla</Description>
+    <Version>1.7.2</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RestoreAdditionalProjectSources>
+      https://nuget.bepinex.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+	<LangVersion>10.0</LangVersion>
+	<Authors>@hostmods (telegram)</Authors>
+  </PropertyGroup>
+
+  
+  <ItemGroup>
+    <PackageReference Include="AmongUs.GameLibs.Steam" Version="2025.11.18" PrivateAssets="all" Condition="'$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug'" />
+
+    <PackageReference Include="BepInEx.IL2CPP.MSBuild" Version="2.1.0-rc.1"/>
+    <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.735" Private="false" ExcludeAssets="runtime;native"/>
+  </ItemGroup>
+</Project>
+
