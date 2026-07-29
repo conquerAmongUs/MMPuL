@@ -16,7 +16,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.7.2")]
+    [BepInPlugin("com.example.multimode", "MMPuL", "1.7.3")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -36,9 +36,8 @@ namespace MultiModeMod
 		public static bool NeedToResetLobby = false;
 		public static float ResetTimer = 0f;
 		public static bool endfromgame = false;
-		public static bool InGameChat = false;
-		public static bool InGameChatEnable = false;
 		public static bool Dbodys = false;
+		public static int ChanceofDeath = 0;
 		// classic
 		public static int impcount = 1;
 		public static bool MoreImpsMode = false;
@@ -48,8 +47,10 @@ namespace MultiModeMod
 		public static float ChaosInterval = 5f; // Интервал в секундах
 		
 		public static bool IsSSPartyActive = false;
+		public static bool IsSSPartySwapActive = false;
 		public static bool SSPartyMode = false;
 		public static bool SSPartyEveryMode = false;
+		public static bool SSPartySwapMode = false;
 		public static PlayerControl TargetPlayer = null;
 		public static int selectedPlayer = 0;
 		// minigames
@@ -187,7 +188,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.7.2 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.7.3 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -260,21 +261,25 @@ namespace MultiModeMod
 							if (SSPartyMode)
 							{
 								SSPartyEveryMode = GUILayout.Toggle(SSPartyEveryMode, "Менять каждый раунд");
-								try
+								SSPartySwapMode = GUILayout.Toggle(SSPartySwapMode, "Свап режим (Все меняются обликом)");
+								if (!SSPartySwapMode)
 								{
-									var AllPC = PlayerControl.AllPlayerControls;
-									if (selectedPlayer == 0)
+									try
 									{
-										GUILayout.Label("Игрок: Случайный");
+										var AllPC = PlayerControl.AllPlayerControls;
+										if (selectedPlayer == 0)
+										{
+											GUILayout.Label("Игрок: Случайный");
+										}
+										else
+										{
+											PlayerControl player = AllPC[selectedPlayer - 1];
+											GUILayout.Label($"Игрок: {player.Data.PlayerName}");
+										}
+										selectedPlayer = Mathf.RoundToInt(GUILayout.HorizontalSlider(selectedPlayer, 0, AllPC.Count));
 									}
-									else
-									{
-										PlayerControl player = AllPC[selectedPlayer - 1];
-										GUILayout.Label($"Игрок: {player.Data.PlayerName}");
-									}
-									selectedPlayer = Mathf.RoundToInt(GUILayout.HorizontalSlider(selectedPlayer, 0, AllPC.Count));
+									catch {selectedPlayer = 0;}
 								}
-								catch {selectedPlayer = 0;}
 							}
 					
 							break;
@@ -467,12 +472,10 @@ namespace MultiModeMod
 							}
 							GUILayout.EndHorizontal();
 							GUILayout.Space(5);
-							InGameChat = GUILayout.Toggle(InGameChat, "Чат во время игры (Эксперементально)");
+							GUILayout.Label($"Шанс смерти при использовании лестницы: {ChanceofDeath}%");
+							ChanceofDeath = Mathf.RoundToInt(GUILayout.HorizontalSlider(ChanceofDeath, 0, 100));
+							GUILayout.Space(5);
 							Dbodys = GUILayout.Toggle(Dbodys, "Отсавлять трупы после смерти (В разработке)");
-							/* if (GUILayout.Button("<b>test</b>"))
-							{
-								Coroutines.Instance.CoInGameChatStart();
-							} */
 							break;
 
 						case 3:
@@ -567,9 +570,9 @@ namespace MultiModeMod
 					}
 					else
 					{
+						IsSSPartySwapActive = false;
 						IsSSPartyActive = false;
 						IsChaosActive = false;
-						InGameChatEnable = false;
 						// Сброс всех состояний при выходе в лобби
 						_zombieGameActive = false;
 						_patientZeroSpawned = false;
@@ -673,7 +676,6 @@ namespace MultiModeMod
         {
             public static bool Prefix()
             {
-				if (InGameChat) {InGameChatEnable = true; Coroutines.Instance.CoInGameChatStart();}
 				if (GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8)
 				{
 					foreach (PlayerControl p in PlayerControl.AllPlayerControls)
@@ -762,17 +764,25 @@ namespace MultiModeMod
 					if (ChaosMode) {IsChaosActive = true; Coroutines.Instance.CoChaosModeStart();}
 					if (SSPartyMode) 
 					{
-						IsSSPartyActive = true;
-						if (selectedPlayer == 0)
+						if (!SSPartySwapMode)
 						{
-							var players = PlayerControl.AllPlayerControls;
-							TargetPlayer = players[UnityEngine.Random.Range(0, players.Count)];
+							IsSSPartyActive = true;
+							if (selectedPlayer == 0)
+							{
+								var players = PlayerControl.AllPlayerControls;
+								TargetPlayer = players[UnityEngine.Random.Range(0, players.Count)];
+							}
+							else
+							{
+								TargetPlayer = PlayerControl.AllPlayerControls[selectedPlayer - 1];
+							}
+							Coroutines.Instance.CoSSPartyStart(TargetPlayer);
 						}
 						else
 						{
-							TargetPlayer = PlayerControl.AllPlayerControls[selectedPlayer - 1];
+							IsSSPartySwapActive = true;
+							Coroutines.Instance.CoSSPartySwapStart();
 						}
-						Coroutines.Instance.CoSSPartyStart(TargetPlayer);
 					}
 				}
 				else if (GameModeTab == 2)
@@ -1946,16 +1956,16 @@ namespace MultiModeMod
 			[HarmonyPrefix]
 			public static bool Prefix()
 			{
-				if (IsSSPartyActive && SSPartyEveryMode)
+				if (SSPartyEveryMode)
 				{
-					Coroutines.Instance.CoSSPartyStart(PlayerControl.AllPlayerControls[UnityEngine.Random.Range(0, PlayerControl.AllPlayerControls.Count)]);
+					if (IsSSPartyActive) {Coroutines.Instance.CoSSPartyStart(PlayerControl.AllPlayerControls[UnityEngine.Random.Range(0, PlayerControl.AllPlayerControls.Count)]);}
+					if (IsSSPartySwapActive) {Coroutines.Instance.CoSSPartySwapStart();}
 				}
 				// Если идет кастомная мини-игра, нажатие на Report просто игнорируется
 				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8)
 				{
 					return false; // Запретить репорт
 				}
-				InGameChatEnable = false;
 				return true;
 			}
 		}
@@ -1988,18 +1998,23 @@ namespace MultiModeMod
 				}
 			}
 		}
-		[HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-		public static class HudManager_Update
+		[HarmonyPatch(typeof(PlayerPhysics), nameof(PlayerPhysics.ClimbLadder))]
+		public class ClimbLadderPatch
 		{
-			public static void Postfix(HudManager __instance)
+			static void Prefix(PlayerPhysics __instance)
 			{
-				if (InGameChatEnable || MeetingHud.Instance || !ShipStatus.Instance || PlayerControl.LocalPlayer.Data.IsDead) // AlwaysChat
+				if (!AmongUsClient.Instance.AmHost)
+					return;
+
+				PlayerControl player = __instance.myPlayer;
+
+				if (player == null)
+					return;
+
+				if (UnityEngine.Random.value < ChanceofDeath / 100f)
 				{
-					__instance.Chat.gameObject.SetActive(true);
-				}
-				else
-				{
-					__instance.Chat.gameObject.SetActive(false);
+					UnityEngine.Debug.Log($"{player.Data.PlayerName} сдох от лестницы");
+					player.RpcSetRole(RoleTypes.CrewmateGhost, true);
 				}
 			}
 		}
@@ -2354,6 +2369,72 @@ namespace MultiModeMod
 			}
 		}
 		
+		public void CoSSPartySwapStart()
+		{
+			StartCoroutine(CoSSPartySwap().WrapToIl2Cpp());
+		}
+		private IEnumerator CoSSPartySwap()
+		{
+			List<PlayerControl> players = new List<PlayerControl>();
+
+			foreach (PlayerControl p in PlayerControl.AllPlayerControls)
+			{
+				players.Add(p);
+			}
+
+			if (players.Count < 2)
+				yield break;
+
+			List<PlayerControl> targets = new List<PlayerControl>();
+
+			foreach (PlayerControl p in players)
+			{
+				targets.Add(p);
+			}
+
+			// Генерируем перестановку, пока никто не попадает в самого себя.
+			do
+			{
+				targets = new List<PlayerControl>(players);
+
+				// Fisher-Yates Shuffle
+				for (int i = targets.Count - 1; i > 0; i--)
+				{
+					int j = UnityEngine.Random.Range(0, i + 1);
+					(targets[i], targets[j]) = (targets[j], targets[i]);
+				}
+
+			} while (HasSelfTarget(players, targets));
+
+			for (int i = 0; i < players.Count; i++)
+			{
+				PlayerControl player = players[i];
+				PlayerControl target = targets[i];
+
+				BatchedMessage batch = new BatchedMessage();
+				RoleTypes currentRole = player.Data.RoleType;
+
+				batch.QueueSetRole(player, RoleTypes.Shapeshifter, true);
+				batch.QueueShapeshift(player, target, false);
+				batch.QueueSetRole(player, currentRole, true);
+
+				batch.FinishBatch();
+
+				yield return Effects.Wait(0.05f);
+			}
+		}
+
+		private bool HasSelfTarget(List<PlayerControl> players, List<PlayerControl> targets)
+		{
+			for (int i = 0; i < players.Count; i++)
+			{
+				if (players[i] == targets[i])
+					return true;
+			}
+
+			return false;
+		}
+		
 		public void CoFFAModeStart()
 		{
 			StartCoroutine(CoFFAMode().WrapToIl2Cpp());
@@ -2374,26 +2455,6 @@ namespace MultiModeMod
 
 				yield return Effects.Wait(0.05f);
 			}
-		}
-		
-		public void CoInGameChatStart()
-		{
-			StartCoroutine(CoInGameChat().WrapToIl2Cpp());
-		}
-		private IEnumerator CoInGameChat()
-		{
-			yield return new WaitForSeconds(0.5f);
-			
-			BatchedMessage batch = new BatchedMessage();
-			if(MeetingHud.Instance == null)
-			{
-				MeetingHud.Instance = UnityEngine.Object.Instantiate<MeetingHud>(HudManager.Instance.MeetingPrefab);
-				batch.QueueSpawn(MeetingHud.Instance, -2, SpawnFlags.None);
-			}
-			//MeetingHud.VoterState[] votes = Array.Empty<MeetingHud.VoterState>();
-			//batch.QueueVotingComplete(votes, null, true);
-			batch.QueueCloseMeeting();
-			batch.FinishBatch();
 		}
 	}
 	public class BatchedMessage
