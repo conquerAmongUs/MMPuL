@@ -16,7 +16,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.7.3")]
+    [BepInPlugin("com.example.multimode", "MMPuL", "1.7.4")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -36,8 +36,8 @@ namespace MultiModeMod
 		public static bool NeedToResetLobby = false;
 		public static float ResetTimer = 0f;
 		public static bool endfromgame = false;
-		public static bool Dbodys = false;
 		public static int ChanceofDeath = 0;
+		public static bool NoImpLadderDChance = false;
 		// classic
 		public static int impcount = 1;
 		public static bool MoreImpsMode = false;
@@ -188,7 +188,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.7.3 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.7.4 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -474,8 +474,8 @@ namespace MultiModeMod
 							GUILayout.Space(5);
 							GUILayout.Label($"Шанс смерти при использовании лестницы: {ChanceofDeath}%");
 							ChanceofDeath = Mathf.RoundToInt(GUILayout.HorizontalSlider(ChanceofDeath, 0, 100));
+							NoImpLadderDChance = GUILayout.Toggle(NoImpLadderDChance, "Предатели тоже могут умереть от лестницы");
 							GUILayout.Space(5);
-							Dbodys = GUILayout.Toggle(Dbodys, "Отсавлять трупы после смерти (В разработке)");
 							break;
 
 						case 3:
@@ -953,7 +953,7 @@ namespace MultiModeMod
 			{
 				_zombieGameActive = false;
 				UnityEngine.Debug.Log("[Mod] Time's up! Crew Win!");
-				GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
 
@@ -1008,7 +1008,7 @@ namespace MultiModeMod
                 {
                     if (p != null && p.Object != null && !p.IsDead && !p.Role.IsImpostor)
                     {
-                        GameManager.Instance.RpcEndGame(GameOverReason.ImpostorsByKill, false); 
+						Coroutines.Instance.CoEndGameStart(GameOverReason.ImpostorsByKill);
                     }
                 }
 			}
@@ -1044,7 +1044,7 @@ namespace MultiModeMod
 			{
 				_potatoGameActive = false;
 				UnityEngine.Debug.Log("[HotPotato] Время вышло! Выжившие победили!");
-				GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
 
@@ -1115,7 +1115,7 @@ namespace MultiModeMod
 				{
 					// Если людей больше вообще не осталось — завершаем игру
 					_potatoGameActive = false;
-					GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+					Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				}
 				return; // Выходим из этого кадра Update, чтобы не выполнять код ниже
 			}
@@ -1154,7 +1154,7 @@ namespace MultiModeMod
 					else
 					{
 						_potatoGameActive = false;
-						GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+						Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 					}
 					return;
 				}
@@ -1252,7 +1252,7 @@ namespace MultiModeMod
 			{
 				_freezeTagGameActive = false;
 				UnityEngine.Debug.Log("[FreezeTag] Время вышло! Мирные победили!");
-				GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				return;
 			}
 
@@ -1309,7 +1309,7 @@ namespace MultiModeMod
 			{
 				_freezeTagGameActive = false;
 				UnityEngine.Debug.Log("[FreezeTag] Все мирные заморожены! Салки победили!");
-				GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				return;
 			}
 
@@ -1388,7 +1388,7 @@ namespace MultiModeMod
 			{
 				_trafficGameActive = false;
 				UnityEngine.Debug.Log("[sveta for] Время вышло!");
-				GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
 			// --- 1. АВТОМАТ СВЕТОФОРА (ПЕРЕКЛЮЧЕНИЕ СОСТОЯНИЙ) ---
@@ -1550,12 +1550,12 @@ namespace MultiModeMod
 			if (alivePlayersCount == 0) // Никто не выжил
 			{
 				_trafficGameActive = false;
-				GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 			}
 			else if (completedPlayersCount == alivePlayersCount) // Все выжившие выполнили квесты
 			{
 				_trafficGameActive = false;
-				GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 			}
 		}
 		private static void UpdateCopsAndRobbersMode()
@@ -1572,7 +1572,7 @@ namespace MultiModeMod
 			if (_copsGlobalTimer >= CopsMatchDuration)
 			{
 				_copsGameActive = false;
-				GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				UnityEngine.Debug.Log("[cops] Время вышло!");
 				return;
 			}
@@ -1649,14 +1649,14 @@ namespace MultiModeMod
 			if (allTasksDone && anyRobberFree)
 			{
 				_copsGameActive = false;
-				GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false); // Победа преступников
+				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				UnityEngine.Debug.Log("[cops] 67");
 				return;
 			}
 			if (allJailed && players.Count > 1)
 			{
 				_copsGameActive = false;
-				GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false);
+				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				UnityEngine.Debug.Log("[cops] 1488");
 				return;
 			}
@@ -1907,7 +1907,7 @@ namespace MultiModeMod
 					}
 					if (alivePlayers <= 1)
 					{
-						GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+						Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 						return false;
 					}
 				}
@@ -1941,7 +1941,7 @@ namespace MultiModeMod
 					}
 					if (alivePlayers <= 1)
 					{
-						GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_ImpostorsByKills, false);
+						Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_ImpostorsByKills);
 						return false;
 					}
 				}
@@ -2005,12 +2005,12 @@ namespace MultiModeMod
 			{
 				if (!AmongUsClient.Instance.AmHost)
 					return;
-
+				
 				PlayerControl player = __instance.myPlayer;
 
 				if (player == null)
 					return;
-
+				if (!NoImpLadderDChance && player.Data.Role.IsImpostor) return;
 				if (UnityEngine.Random.value < ChanceofDeath / 100f)
 				{
 					UnityEngine.Debug.Log($"{player.Data.PlayerName} сдох от лестницы");
@@ -2269,6 +2269,15 @@ namespace MultiModeMod
 			p.MyPhysics.RpcBootFromVent(ventId);
 		}
 		
+		public void CoEndGameStart(GameOverReason reason, float waitsec = 1f)
+		{
+			StartCoroutine(CoEndGame(reason, waitsec).WrapToIl2Cpp());
+		}
+		private IEnumerator CoEndGame(GameOverReason reason, float waitsec = 1f)
+		{
+			yield return new WaitForSeconds(waitsec);
+			GameManager.Instance.RpcEndGame(reason, false);
+		}
 		
 		public void CoChaosModeStart()
 		{
