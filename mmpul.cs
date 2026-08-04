@@ -9,6 +9,7 @@ using AmongUs.GameOptions;
 using System;
 using System.Collections.Generic;
 using System.Collections;
+using System.Linq;
 using Hazel;
 using InnerNet;
 using Il2CppInterop.Runtime.Injection;
@@ -16,7 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.7.4")]
+    [BepInPlugin("com.example.multimode", "MMPuL", "1.8.0")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -38,6 +39,8 @@ namespace MultiModeMod
 		public static bool endfromgame = false;
 		public static int ChanceofDeath = 0;
 		public static bool NoImpLadderDChance = false;
+		public static bool AllowColorCommand = false;
+		public static bool AllowColorFortegreen = false;
 		// classic
 		public static int impcount = 1;
 		public static bool MoreImpsMode = false;
@@ -188,7 +191,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.7.4 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.8.0 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -476,6 +479,8 @@ namespace MultiModeMod
 							ChanceofDeath = Mathf.RoundToInt(GUILayout.HorizontalSlider(ChanceofDeath, 0, 100));
 							NoImpLadderDChance = GUILayout.Toggle(NoImpLadderDChance, "Предатели тоже могут умереть от лестницы");
 							GUILayout.Space(5);
+							AllowColorCommand = GUILayout.Toggle(AllowColorCommand, "Разрешить всем использовать /color");
+							AllowColorFortegreen = GUILayout.Toggle(AllowColorFortegreen, "Разрешить фортегрин в /color");
 							break;
 
 						case 3:
@@ -602,6 +607,7 @@ namespace MultiModeMod
 						_trafficStateTimer = 0f;
 						_trafficRedGraceTimer = 0f;
 						_trafficGraceActive = false;
+						_trafficGlobalTimer = 0f;
 						TrafficRedPositions.Clear();
 						TrafficCompletedPlayers.Clear();
 						
@@ -670,7 +676,15 @@ namespace MultiModeMod
 				}
 			}
 		}
-		
+		[HarmonyPatch(typeof(IGameOptionsExtensions), nameof(IGameOptionsExtensions.GetAdjustedNumImpostors))]
+		public static class GetAdjustedNumImpostorsPatch
+		{
+			static void Postfix(ref int __result)
+			{
+				if (GameModeTab == 1 && MoreImpsMode)
+					__result = impcount;
+			}
+		}
 		[HarmonyPatch(typeof(RoleManager), nameof(RoleManager.SelectRoles))]
         public static class DisableRoleAssignPatch
         {
@@ -684,7 +698,7 @@ namespace MultiModeMod
 					}
 					return false;
 				}
-				if (GameModeTab == 1 && MoreImpsMode)
+				/* if (GameModeTab == 1 && MoreImpsMode)
 				{
 					var players = PlayerControl.AllPlayerControls;
 
@@ -705,7 +719,7 @@ namespace MultiModeMod
 							false);
 					}
 					return false;
-				}
+				} */
 				if (GameModeTab == 7)
 				{
 					IsFFAActive = true;
@@ -2018,130 +2032,23 @@ namespace MultiModeMod
 				}
 			}
 		}
-		/* [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.FixedUpdate))]
-		public static class AutoRepairSabotagePatch
+		[HarmonyPatch(typeof(ChatController), nameof(ChatController.AddChat))]
+		public static class AddChatPatch
 		{
-			public static void Postfix(ShipStatus __instance)
+			public static void Prefix(PlayerControl sourcePlayer, string chatText)
 			{
-				
-				if (_zombieGameActive || IsFFAActive)
-				{
-					// --- АВТО-ОТКРЫТИЕ ВСЕХ ЗАКРЫТЫХ ДВЕРЕЙ ---
-					if (__instance.AllDoors != null)
-					{
-						for (int i = 0; i < __instance.AllDoors.Count; i++)
-						{
-							var door = __instance.AllDoors[i];
-							if (door != null && !door.IsOpen) 
-							{
-								__instance.RpcUpdateSystem(SystemTypes.Doors, (byte)((byte)door.Id | 64));
-							}
-						}
-					}
-					
-					// Reactor
-					if (__instance.Systems.TryGetValue(SystemTypes.Reactor, out var reactor))
-					{
-						var reactorSys = reactor.TryCast<ReactorSystemType>();
-
-						if (reactorSys != null && reactorSys.IsActive)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.Reactor, 16);
-						}
-					}
-
-					// Polus reactor
-					if (__instance.Systems.TryGetValue(SystemTypes.Laboratory, out var lab))
-					{
-						var labSys = lab.TryCast<ReactorSystemType>();
-
-						if (labSys != null && labSys.IsActive)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.Laboratory, 16);
-						}
-					}
-
-					// Oxygen
-					if (__instance.Systems.TryGetValue(SystemTypes.LifeSupp, out var oxy))
-					{
-						var oxySys = oxy.TryCast<LifeSuppSystemType>();
-
-						if (oxySys != null && oxySys.IsActive)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.LifeSupp, 16);
-						}
-					}
-
-					// Comms
-					if (__instance.Systems.TryGetValue(SystemTypes.Comms, out var comms))
-					{
-						if (comms.TryCast<HudOverrideSystemType>()?.IsActive == true)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.Comms, 16);
-						}
-
-						if (comms.TryCast<HqHudSystemType>()?.IsActive == true)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.Comms, 16 | 0);
-							__instance.RpcUpdateSystem(SystemTypes.Comms, 16 | 1);
-						}
-					}
-
-					// Lights
-					if (__instance.Systems.TryGetValue(SystemTypes.Electrical, out var elec))
-					{
-						var switchSys = __instance.Systems[SystemTypes.Electrical]
-							.TryCast<SwitchSystem>();
-
-						for (byte i = 0; i < 5; i++)
-						{
-							int mask = 1 << i;
-
-							bool actual =
-								(switchSys.ActualSwitches & mask) != 0;
-
-							bool expected =
-								(switchSys.ExpectedSwitches & mask) != 0;
-
-							if (actual != expected)
-							{
-								__instance.RpcUpdateSystem(
-									SystemTypes.Electrical,
-									i
-								);
-							}
-						}
-					}
-
-					// Airship reactor
-					if (__instance.Systems.TryGetValue(SystemTypes.HeliSabotage, out var heli))
-					{
-						var heliSys = heli.TryCast<HeliSabotageSystem>();
-
-						if (heliSys != null && heliSys.IsActive)
-						{
-							__instance.RpcUpdateSystem(SystemTypes.HeliSabotage, 16 | 0);
-							__instance.RpcUpdateSystem(SystemTypes.HeliSabotage, 16 | 1);
-						}
-					}
-				}
+				if (!AmongUsClient.Instance.AmHost) return;
+				if (string.IsNullOrWhiteSpace(chatText)) return;
+				if (!chatText.StartsWith("/color ", StringComparison.OrdinalIgnoreCase)) return;
+				string[] args = chatText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+				if (args.Length < 2) return;
+				if (!ColorHelper.TryGetColor(args[1], out byte colorId)) return;
+				if (!LobbyBehaviour.Instance) return;
+				if (!AllowColorCommand) {if (sourcePlayer != PlayerControl.LocalPlayer) return;}
+				if (!AllowColorFortegreen && colorId == 18) {if (sourcePlayer != PlayerControl.LocalPlayer) return;}
+				sourcePlayer.RpcSetColor(colorId);
 			}
-		} */
-		
-/* 		[HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
-		public static class GameEndResetPatch
-		{
-			[HarmonyPostfix]
-			public static void Postfix()
-			{
-				if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
-				{
-					// Включаем режим ожидания лобби и сбрасываем таймер
-					MultiModePlugin.NeedToResetLobby = true;
-					MultiModePlugin.ResetTimer = 0f;
-				}
-			}
-		} */
+		}
 		
 		internal class CustomNetworkHelper
 		{
@@ -2363,7 +2270,7 @@ namespace MultiModeMod
 			{
 				if (target == null) {target = PlayerControl.AllPlayerControls[UnityEngine.Random.Range(0, PlayerControl.AllPlayerControls.Count)];}
 				// if(player == target || player.shapeshiftTargetPlayerId == target.PlayerId) continue;
-				
+				if (player == null || player.Data == null || player.Data.IsDead) continue;
 				BatchedMessage batch = new BatchedMessage();
 				RoleTypes currentRole = player.Data.RoleType;
 
@@ -2419,7 +2326,9 @@ namespace MultiModeMod
 			{
 				PlayerControl player = players[i];
 				PlayerControl target = targets[i];
-
+				
+				if (player == null || player.Data == null || player.Data.IsDead) continue;
+				
 				BatchedMessage batch = new BatchedMessage();
 				RoleTypes currentRole = player.Data.RoleType;
 
@@ -2553,6 +2462,43 @@ namespace MultiModeMod
 			writer.EndMessage();
 			AmongUsClient.Instance.SendOrDisconnect(writer);
 			writer.Recycle();
+		}
+	}
+	
+	public record ColorInfo(byte Id, params string[] Aliases);
+	public static class ColorHelper
+	{
+		public static readonly ColorInfo[] Colors =
+		{
+			new(0, "0", "red", "красн", "красный", "помидор"),
+			new(1, "1", "blue", "син", "синий"),
+			new(2, "2", "green", "зел", "зеленый", "зелёный"),
+			new(3, "3", "pink", "роз", "розовый", "шлюха"),
+			new(4, "4", "orange", "оранж", "оранжевый", "трамп"),
+			new(5, "5", "yellow", "желт", "жёлт", "желтый", "жёлтый"),
+			new(6, "6", "black", "черн", "чёрн", "черный", "чёрный"),
+			new(7, "7", "white", "бел", "белый"),
+			new(8, "8", "purple", "фиол", "фиолет", "фиолетовый"),
+			new(9, "9", "brown", "корич", "коричн", "коричневый", "говно", "какашка"),
+			new(10, "10", "cyan", "голуб", "голубой", "бирюзовый", "гей"),
+			new(11, "11", "lime", "лайм", "лаймовый", "салат", "салатовый"),
+			new(12, "12", "maroon", "бордо", "бордовый", "борода"),
+			new(13, "13", "rose", "сирень", "сиреневый"),
+			new(14, "14", "banana", "банан", "банановый"),
+			new(15, "15", "gray", "сер", "серый"),
+			new(16, "16", "tan", "беж", "бежевый"),
+			new(17, "17", "coral", "корал", "коралл", "кораловый", "коралловый"),
+			new(18, "18", "fortegreen", "форте", "фортегрин", "???"),
+		};
+
+		private static readonly Dictionary<string, byte> AliasMap =
+			Colors
+				.SelectMany(c => c.Aliases.Select(alias => new KeyValuePair<string, byte>(alias, c.Id)))
+				.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
+
+		public static bool TryGetColor(string input, out byte colorId)
+		{
+			return AliasMap.TryGetValue(input.Trim(), out colorId);
 		}
 	}
 }
