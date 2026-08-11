@@ -17,7 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.8.0")]
+    [BepInPlugin("com.example.multimode", "MMPuL", "1.8.1")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -122,6 +122,7 @@ namespace MultiModeMod
 		private static float _trafficRedGraceTimer = 0f;
 		public static bool IsRedLightActive = false;
 		private static bool _trafficGraceActive = false;
+		private static bool _trafficOnlyOne = false;
 
 		// Позиции игроков в момент включения КРАСНОГО света
 		public static Dictionary<byte, Vector2> TrafficRedPositions = new Dictionary<byte, Vector2>();
@@ -191,7 +192,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.8.0 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.8.1 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -387,7 +388,9 @@ namespace MultiModeMod
 							GUILayout.Label($"Время желтого света: {TrafficYellowDuration:F2}s");
 							float rawYellow = GUILayout.HorizontalSlider(TrafficYellowDuration, 0.25f, 2.00f);
 							TrafficYellowDuration = Mathf.Round(rawYellow / 0.05f) * 0.05f;
-
+							
+							_trafficOnlyOne = GUILayout.Toggle(_trafficOnlyOne, "Побеждает первый выполнивший задания");
+							
 							// 3. Время красного света (Шаг: 1)
 							GUILayout.Label($"Время красного света: {TrafficRedDuration:F0}s");
 							TrafficRedDuration = Mathf.Round(GUILayout.HorizontalSlider(TrafficRedDuration, 3f, 15f));
@@ -752,7 +755,6 @@ namespace MultiModeMod
 				// Проверяем, что мы хост комнаты, так как только хост имеет право раздавать настройки
 				if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
 				{
-					UnityEngine.Debug.Log("[ZombieMod] Сцена лобби загружена. Начинаем принудительный сброс настроек для всех игроков...");
 					MultiModePlugin.NeedToResetLobby = true;
 					MultiModePlugin.ResetTimer = 0f;
 				}
@@ -937,7 +939,7 @@ namespace MultiModeMod
 							// Он уже Crewmate благодаря коду выше, так что просто красим его
 							SetPlayerColorSecure(p.Object, 2); // Нулевой пациент стал зеленым зомби
 							_patientZeroSpawned = true;
-							UnityEngine.Debug.Log($"[Mod] 15 секунд прошло! {p.PlayerName} официально стал Нулевым Пациентом.");
+							UnityEngine.Debug.Log($"[MMPuL] {p.PlayerName} стал Нулевым Пациентом.");
 						}
 					}
 					else
@@ -966,7 +968,7 @@ namespace MultiModeMod
 			if (_zombieMatchTimer >= ZombieMatchDuration)
 			{
 				_zombieGameActive = false;
-				UnityEngine.Debug.Log("[Mod] Time's up! Crew Win!");
+				UnityEngine.Debug.Log("[MMPuL] Зомби проиграли по времени");
 				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
@@ -1016,7 +1018,7 @@ namespace MultiModeMod
 			if (!humansLeft && players.Count > 1)
 			{
 				_zombieGameActive = false;
-				UnityEngine.Debug.Log("[Mod] Zombies Win!");
+				UnityEngine.Debug.Log("[MMPuL] Зомби всех заразили");
 				
 				foreach (var p in players)
                 {
@@ -1045,7 +1047,6 @@ namespace MultiModeMod
 					SetPlayerColorSecure(p.Object, colorId);
 				}
 				_miniGamesApplied = true; // Отключаем таймер, красим один раз за раунд
-				UnityEngine.Debug.Log("[Mod] Mini-Games colors applied with 5s delay!");
 			}
 		}
 		private static void UpdateHotPotatoMode()
@@ -1057,7 +1058,7 @@ namespace MultiModeMod
 			if (_potatoGlobalTimer >= PotatoMatchDuration)
 			{
 				_potatoGameActive = false;
-				UnityEngine.Debug.Log("[HotPotato] Время вышло! Выжившие победили!");
+				UnityEngine.Debug.Log("[MMPuL] Время вышло! Выжившие победили!");
 				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
@@ -1088,7 +1089,7 @@ namespace MultiModeMod
 						_potatoDetonationTimer = 0f;
 
 						SetPlayerColorSecure(target, 4); // Выдаем картошку — Оранжевый (4)
-						UnityEngine.Debug.Log($"[HotPotato] Первая картошка выдана: {target.Data.PlayerName}");
+						UnityEngine.Debug.Log($"[MMPuL] Первая картошка выдана: {target.Data.PlayerName}");
 					}
 				}
 				return; // Пока первая картошка не спавнилась, физику касаний не считаем
@@ -1102,7 +1103,7 @@ namespace MultiModeMod
 			// Если игрок с картошкой вышел, отключился или его объект стёрся из памяти игры
 			if (currentPotatoPlayer == null || currentPotatoPlayer.Data == null || currentPotatoPlayer.Data.Disconnected)
 			{
-				UnityEngine.Debug.Log("[HotPotato] Игрок с картошкой вышел из игры! Ищем нового ведущего...");
+				UnityEngine.Debug.Log("[MMPuL] Игрок с картошкой вышел из игры! Ищем нового ведущего...");
 				
 				List<PlayerControl> remainingPlayers = new List<PlayerControl>();
 				foreach (var p in GameData.Instance.AllPlayers)
@@ -1123,7 +1124,7 @@ namespace MultiModeMod
 					_potatoCooldownTimer = PotatoTransferCooldown; // Ставим задержку на передачу
 
 					SetPlayerColorSecure(nextTarget, 4); // Красим в оранжевый
-					UnityEngine.Debug.Log($"[HotPotato] Новая картошка выдана игроку: {nextTarget.Data.PlayerName} взамен вылетевшего.");
+					UnityEngine.Debug.Log($"[MMPuL] Новая картошка выдана игроку: {nextTarget.Data.PlayerName} взамен вылетевшего.");
 				}
 				else
 				{
@@ -1143,7 +1144,7 @@ namespace MultiModeMod
 				// Взрыв игрока по истечении времени
 				if (_potatoDetonationTimer >= PotatoDetonationTime)
 				{
-					UnityEngine.Debug.Log($"[HotPotato] Игрок {currentPotatoPlayer.Data.PlayerName} взорвался!");
+					UnityEngine.Debug.Log($"[MMPuL] Игрок {currentPotatoPlayer.Data.PlayerName} взорвался!");
 
 					currentPotatoPlayer.RpcSetRole(RoleTypes.CrewmateGhost, true);
 					// Ищем следующего живого игрока для передачи картошки
@@ -1199,7 +1200,7 @@ namespace MultiModeMod
 							SetPlayerColorSecure(oldPotatoOwner, 10); // Старый становится голубым
 							SetPlayerColorSecure(newPotatoOwner, 4);  // Новый становится оранжевым
 
-							UnityEngine.Debug.Log($"[HotPotato] Картошка передана от {oldPotatoOwner.Data.PlayerName} к {newPotatoOwner.Data.PlayerName}");
+							UnityEngine.Debug.Log($"[MMPuL] Картошка передана от {oldPotatoOwner.Data.PlayerName} к {newPotatoOwner.Data.PlayerName}");
 							break;
 						}
 					}
@@ -1247,7 +1248,7 @@ namespace MultiModeMod
 						pool.RemoveAt(randIndex);
 
 						SetPlayerColorSecure(pickedTagger, 0); // Красный цвет
-						UnityEngine.Debug.Log($"[FreezeTag] Игрок {pickedTagger.Data.PlayerName} стал Салкой.");
+						UnityEngine.Debug.Log($"[MMPuL] Игрок {pickedTagger.Data.PlayerName} стал Салкой.");
 					}
 
 					// Все остальные гарантированно остаются Лаймовыми
@@ -1265,7 +1266,7 @@ namespace MultiModeMod
 			if (_freezeTagGlobalTimer >= (FreezeMatchDuration + 10f)) // Время матча + 10 секунд задержки старта
 			{
 				_freezeTagGameActive = false;
-				UnityEngine.Debug.Log("[FreezeTag] Время вышло! Мирные победили!");
+				UnityEngine.Debug.Log("[MMPuL] Время вышло! Мирные победили!");
 				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				return;
 			}
@@ -1304,7 +1305,7 @@ namespace MultiModeMod
 					if (FrozenTimers[pid] >= FreezeDeathTime)
 					{
 						// Игрок окончательно замерз — уничтожаем его
-						UnityEngine.Debug.Log($"[FreezeTag] {p.PlayerName} замерз насмерть.");
+						UnityEngine.Debug.Log($"[MMPuL] {p.PlayerName} замерз насмерть.");
 
 						p.Object.RpcSetRole(RoleTypes.CrewmateGhost, true);
 						FrozenTimers.Remove(pid);
@@ -1322,7 +1323,7 @@ namespace MultiModeMod
 			if (!activeCrewmatesLeft && _freezeTagStarted)
 			{
 				_freezeTagGameActive = false;
-				UnityEngine.Debug.Log("[FreezeTag] Все мирные заморожены! Салки победили!");
+				UnityEngine.Debug.Log("[MMPuL] Все мирные заморожены! Салки победили!");
 				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
 				return;
 			}
@@ -1365,7 +1366,7 @@ namespace MultiModeMod
 							SetPlayerColorSecure(crew.Object, 10); // Превращаем в ледышку (Голубой)
 							PlayerCooldowns[tagger.PlayerId] = TaggerFreezeCooldown; // Вешаем кулдаун на салку
 							FrozenTimers[crew.PlayerId] = 0f; // Сбрасываем таймер жизни во льду
-							UnityEngine.Debug.Log($"[FreezeTag] {tagger.PlayerName} заморозил {crew.PlayerName}");
+							UnityEngine.Debug.Log($"[MMPuL] {tagger.PlayerName} заморозил {crew.PlayerName}");
 						}
 					}
 
@@ -1386,7 +1387,7 @@ namespace MultiModeMod
 							SetPlayerColorSecure(frozen.Object, 11); // Размораживаем (обратно в Лайм)
 							PlayerCooldowns[helper.PlayerId] = CrewUnfreezeCooldown; // Вешаем кулдаун спасителю
 							FrozenTimers.Remove(frozen.PlayerId); // Удаляем из списка замерзающих
-							UnityEngine.Debug.Log($"[FreezeTag] {helper.PlayerName} разморозил {frozen.PlayerName}");
+							UnityEngine.Debug.Log($"[MMPuL] {helper.PlayerName} разморозил {frozen.PlayerName}");
 						}
 					}
 				}
@@ -1401,7 +1402,7 @@ namespace MultiModeMod
 			if (_trafficGlobalTimer >= TrafficMatchDuration)
 			{
 				_trafficGameActive = false;
-				UnityEngine.Debug.Log("[sveta for] Время вышло!");
+				UnityEngine.Debug.Log("[MMPuL] Время вышло!");
 				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 				return;
 			}
@@ -1537,7 +1538,15 @@ namespace MultiModeMod
 					{
 						TrafficCompletedPlayers.Add(p.PlayerId);
 						SetPlayerColorSecure(p.Object, 10); // Становится голубым и получает иммунитет
-						UnityEngine.Debug.Log($"[TrafficLight] {p.PlayerName} выполнил все задания и спасся!");
+						UnityEngine.Debug.Log($"[MMPuL] {p.PlayerName} выполнил все задания и спасся!");
+						// ЕСЛИ ВКЛЮЧЕН РЕЖИМ ТОЛЬКО ОДНОГО ПОБЕДИТЕЛЯ
+						if (_trafficOnlyOne)
+						{
+							_trafficGameActive = false;
+							UnityEngine.Debug.Log($"[MMPuL] {p.PlayerName} победил первым!");
+							Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask, 0.5f);
+							return;
+						}
 					}
 					continue; 
 				}
@@ -1553,7 +1562,7 @@ namespace MultiModeMod
 						// Если игрок вышел за пределы радиуса в 1 единицу — превращаем в призрака
 						if (Vector2.Distance(originalPos, currentPos) > 1.0f)
 						{
-							UnityEngine.Debug.Log($"[TrafficLight] Игрок {p.PlayerName} нарушил правила и двигался на красный свет!");
+							UnityEngine.Debug.Log($"[MMPuL] Игрок {p.PlayerName} двигался на красный свет!");
 							p.Object.RpcSetRole(RoleTypes.CrewmateGhost, false);
 						}
 					}
@@ -1566,7 +1575,7 @@ namespace MultiModeMod
 				_trafficGameActive = false;
 				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
 			}
-			else if (completedPlayersCount == alivePlayersCount) // Все выжившие выполнили квесты
+			else if (!_trafficOnlyOne && completedPlayersCount == alivePlayersCount) // Все выжившие выполнили квесты
 			{
 				_trafficGameActive = false;
 				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
@@ -1587,7 +1596,7 @@ namespace MultiModeMod
 			{
 				_copsGameActive = false;
 				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
-				UnityEngine.Debug.Log("[cops] Время вышло!");
+				UnityEngine.Debug.Log("[MMPuL] Время вышло!");
 				return;
 			}
 			if (_copsGlobalTimer >= 10f && !_copsTeleported)
@@ -1664,14 +1673,14 @@ namespace MultiModeMod
 			{
 				_copsGameActive = false;
 				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
-				UnityEngine.Debug.Log("[cops] 67");
+				UnityEngine.Debug.Log("[MMPuL] Все задания выполнены");
 				return;
 			}
 			if (allJailed && players.Count > 1)
 			{
 				_copsGameActive = false;
 				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
-				UnityEngine.Debug.Log("[cops] 1488");
+				UnityEngine.Debug.Log("[MMPuL] Все пойманы");
 				return;
 			}
 
@@ -1886,11 +1895,12 @@ namespace MultiModeMod
 					}
 				}
 				player.RpcSetColor(colorId); // Отправляем RPC пакет всем игрокам
+				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} окрашен в {colorId}");
                 TrackedColors[player.PlayerId] = colorId; // Записываем в память мода
             }
             catch (Exception e)
             {
-                UnityEngine.Debug.Log("SetColor Secure Error: " + e.Message);
+                UnityEngine.Debug.Log("[MMPuL] SCS Error: " + e.Message);
             }
         }
 		// Патч 1: Запрещаем игре автоматически завершаться по ванильным правилам (например, когда предателей нет)
@@ -2027,9 +2037,85 @@ namespace MultiModeMod
 				if (!NoImpLadderDChance && player.Data.Role.IsImpostor) return;
 				if (UnityEngine.Random.value < ChanceofDeath / 100f)
 				{
-					UnityEngine.Debug.Log($"{player.Data.PlayerName} сдох от лестницы");
+					UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} сдох от лестницы");
 					player.RpcSetRole(RoleTypes.CrewmateGhost, true);
 				}
+			}
+		}
+		[HarmonyPatch(typeof(NumberOption), nameof(NumberOption.Increase))]
+		public static class IncreasePatch
+		{
+			public static bool Prefix(NumberOption __instance)
+			{
+				// if (GameOptionsManager.Instance.CurrentGameOptions.GameMode != GameModes.HideNSeek &&
+					// __instance.Title is StringNames.GameNumImpostors or StringNames.GamePlayerSpeed) return true;
+				
+				if (!Input.GetKey(KeyCode.LeftShift) &&
+					!Input.GetKey(KeyCode.RightShift) &&
+					!Input.GetKey(KeyCode.LeftControl) &&
+					!Input.GetKey(KeyCode.RightControl)) return true;
+				float step = 0.05f;
+				if (__instance.Increment >= 1f) step = 1f;
+				__instance.Value += step;
+				__instance.Value = Mathf.Min(__instance.Value, __instance.ValidRange.max);
+				
+				__instance.UpdateValue();
+				__instance.OnValueChanged.Invoke(__instance);
+				__instance.AdjustButtonsActiveState();
+				return false;
+			}
+		}
+		[HarmonyPatch(typeof(NumberOption), nameof(NumberOption.Decrease))]
+		public static class DecreasePatch
+		{
+			public static bool Prefix(NumberOption __instance)
+			{
+				// if (GameOptionsManager.Instance.CurrentGameOptions.GameMode != GameModes.HideNSeek &&
+					// __instance.Title is StringNames.GameNumImpostors or StringNames.GamePlayerSpeed) return true;
+
+				if (!Input.GetKey(KeyCode.LeftShift) &&
+					!Input.GetKey(KeyCode.RightShift) &&
+					!Input.GetKey(KeyCode.LeftControl) &&
+					!Input.GetKey(KeyCode.RightControl)) return true;
+				float step = 0.05f;
+				if (__instance.Increment >= 1f && __instance.Title != StringNames.GameKillCooldown) step = 1f;
+				__instance.Value -= step;
+				__instance.Value = Mathf.Max(__instance.Value, __instance.ValidRange.min);
+				
+				__instance.UpdateValue();
+				__instance.OnValueChanged.Invoke(__instance);
+				__instance.AdjustButtonsActiveState();
+				return false;
+			}
+		}
+		[HarmonyPatch(typeof(NumberOption), nameof(NumberOption.Initialize))]
+		public static class InitializePatch
+		{
+			public static void Postfix(NumberOption __instance)
+			{
+				// if (GameOptionsManager.Instance.CurrentGameOptions.GameMode != GameModes.HideNSeek && __instance.Title is StringNames.GameNumImpostors or StringNames.GamePlayerSpeed) return;
+				
+				if (__instance.Title == StringNames.GameKillCooldown)
+					__instance.ValidRange = new FloatRange(0.05f,__instance.ValidRange.max);
+				
+				if (__instance.Title == StringNames.ViperDissolveTime ||
+					__instance.Title == StringNames.ScientistCooldown ||
+					__instance.Title == StringNames.ScientistBatteryCharge ||
+					__instance.Title == StringNames.PhantomDuration
+					) __instance.ValidRange = new FloatRange(1f,__instance.ValidRange.max);
+				
+				if (__instance.Title == StringNames.GuardianAngelCooldown ||
+					__instance.Title == StringNames.EngineerCooldown ||
+					__instance.Title == StringNames.PhantomCooldown ||
+					__instance.Title == StringNames.ShapeshifterCooldown ||
+					__instance.Title == StringNames.TrackerCooldown ||
+					__instance.Title == StringNames.TrackerDuration
+					) __instance.ValidRange = new FloatRange(0f,__instance.ValidRange.max);
+				
+				if (__instance.Title == StringNames.GuardianAngelDuration)
+					__instance.ValidRange = new FloatRange(1f,60f);
+				
+				__instance.AdjustButtonsActiveState();
 			}
 		}
 		[HarmonyPatch(typeof(ChatController), nameof(ChatController.AddChat))]
@@ -2047,6 +2133,7 @@ namespace MultiModeMod
 				if (!AllowColorCommand) {if (sourcePlayer != PlayerControl.LocalPlayer) return;}
 				if (!AllowColorFortegreen && colorId == 18) {if (sourcePlayer != PlayerControl.LocalPlayer) return;}
 				sourcePlayer.RpcSetColor(colorId);
+				UnityEngine.Debug.Log($"[MMPuL] {sourcePlayer.Data.PlayerName} новый цвет {colorId}");
 			}
 		}
 		
@@ -2145,11 +2232,11 @@ namespace MultiModeMod
 						SendPrivateOptions(normalOptions, player.OwnerId);
 					} 
 					
-					UnityEngine.Debug.Log("[ZombieMod] All players successfully reset to original lobby options.");
+					UnityEngine.Debug.Log("[MMPuL] All players successfully reset to original lobby options.");
 				}
 				catch (Exception e)
 				{
-					UnityEngine.Debug.Log("[ZombieMod] Reset Error: " + e.Message);
+					UnityEngine.Debug.Log("[MMPuL] Reset Error: " + e.Message);
 				}
 			}
 		}
@@ -2215,33 +2302,39 @@ namespace MultiModeMod
 				if (livePlayers.Count > 0)
 				{
 					PlayerControl target = livePlayers[UnityEngine.Random.Range(0, livePlayers.Count)];
-					int eventType = UnityEngine.Random.Range(0, 1);
-					if (eventType >= 2 && !target.Data.Role.IsImpostor) {eventType = UnityEngine.Random.Range(0, 1);}
-					
+					int eventType = UnityEngine.Random.Range(0, 3);
+					if (eventType >= 2 && !target.Data.Role.IsImpostor) {eventType = UnityEngine.Random.Range(0, 2);}
+					UnityEngine.Debug.Log($"[MMPuL] Для {target.Data.PlayerName} хаос ивент {eventType}");
 					switch (eventType)
 					{
 						case 0:
 							float newSpeed = UnityEngine.Random.Range(0.5f, 3.0f);
 							ApplyChaosSetting(target, FloatOptionNames.PlayerSpeedMod, newSpeed);
+							UnityEngine.Debug.Log($"[MMPuL] {target.Data.PlayerName} новая скорость {newSpeed}");
 							break;
 						case 1:
 							float newVision = UnityEngine.Random.Range(0.35f, 1.5f);
 							if (target.Data.Role.IsImpostor) {ApplyChaosSetting(target, FloatOptionNames.ImpostorLightMod, newVision);}
 							else {ApplyChaosSetting(target, FloatOptionNames.CrewLightMod, newVision);}
+							UnityEngine.Debug.Log($"[MMPuL] {target.Data.PlayerName} новое зрение {newVision}");
 							break;
 						case 2:
-							ApplyChaosSetting(target, FloatOptionNames.KillCooldown, UnityEngine.Random.Range(5f, 30f));
+							float newKill = UnityEngine.Random.Range(1f, 25f);
+							ApplyChaosSetting(target, FloatOptionNames.KillCooldown, newKill);
+							RoleTypes currentRole = target.Data.RoleType;
+							target.RpcSetRole(currentRole, true);
+							UnityEngine.Debug.Log($"[MMPuL] {target.Data.PlayerName} новая перезарядка убийства {newKill}");
 							break;
 					}
 				}
-
+				
 				// Ждем время, настроенное в GUI
 				yield return new WaitForSeconds(MultiModePlugin.ChaosInterval);
 			}
 
 			// Здесь корутина сама завершается, когда условие while становится false
 			MultiModePlugin.IsChaosActive = false; 
-			UnityEngine.Debug.Log("[Chaos] Режим Хаос завершен автоматически.");
+			UnityEngine.Debug.Log("[MMPuL] Режим Хаос завершен.");
 		}
 		private static void ApplyChaosSetting(PlayerControl player, FloatOptionNames optionName, float value)
 		{
@@ -2279,7 +2372,7 @@ namespace MultiModeMod
 				batch.QueueSetRole(player, currentRole, true);
 				
 				batch.FinishBatch();
-
+				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
 				// This function can send up to 42 reliable messages at once, so we need to implement a delay to avoid getting disconnected
 				yield return Effects.Wait(0.05f);
 			}
@@ -2328,7 +2421,7 @@ namespace MultiModeMod
 				PlayerControl target = targets[i];
 				
 				if (player == null || player.Data == null || player.Data.IsDead) continue;
-				
+				if (target == null || target.Data == null) continue;
 				BatchedMessage batch = new BatchedMessage();
 				RoleTypes currentRole = player.Data.RoleType;
 
@@ -2337,7 +2430,7 @@ namespace MultiModeMod
 				batch.QueueSetRole(player, currentRole, true);
 
 				batch.FinishBatch();
-
+				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
 				yield return Effects.Wait(0.05f);
 			}
 		}
@@ -2364,10 +2457,12 @@ namespace MultiModeMod
 				BatchedMessage batch = new BatchedMessage(player.Data.ClientId);
 
 				batch.QueueSetRole(player, RoleTypes.Impostor, false);
+				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} назачен предателем для {player.Data.PlayerName}");
 				foreach(PlayerControl p in PlayerControl.AllPlayerControls)
 				{
 					if (p == player) continue;
 					batch.QueueSetRole(p, RoleTypes.Crewmate, false);
+					UnityEngine.Debug.Log($"[MMPuL] {p.Data.PlayerName} назначен мирным для {player.Data.PlayerName}");
 				}
 				batch.FinishBatch();
 
@@ -2488,7 +2583,7 @@ namespace MultiModeMod
 			new(15, "15", "gray", "сер", "серый"),
 			new(16, "16", "tan", "беж", "бежевый"),
 			new(17, "17", "coral", "корал", "коралл", "кораловый", "коралловый"),
-			new(18, "18", "fortegreen", "форте", "фортегрин", "???"),
+			new(18, "18", "fortegreen", "forte", "форте", "фортегрин", "???"),
 		};
 
 		private static readonly Dictionary<string, byte> AliasMap =
