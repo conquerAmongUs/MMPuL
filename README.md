@@ -1,12 +1,12 @@
 # MMPuL (Multi Mode Public Lobby)
 
-![Скриншот того как выглядит меню MMPuL в игре](Screenshot-MMPuL-Menu.png)
+<p align="center">
+  <img src="Screenshot-MMPuL-Menu.png" alt="Скриншот того как выглядит меню MMPuL в игре"><br><br>
+  <a href="https://t.me/hostmods"><img src="https://img.shields.io/badge/hostmods-2CA5E0?logo=telegram&logoColor=white" alt="ТГК"></a>
+  <a href="https://github.com/conquerAmongUs/MMPuL/releases/latest"><img src="https://img.shields.io/github/v/release/conquerAmongUs/MMPuL" alt="Релиз"></a>
+  <a href="https://github.com/conquerAmongUs/MMPuL/releases/latest"><img src="https://img.shields.io/github/downloads/conquerAmongUs/MMPuL/latest/total" alt="Скачивания"></a>
+</p>
 
-[![ТГК](https://img.shields.io/badge/hostmods-2CA5E0?logo=telegram&logoColor=white)](https://t.me/hostmods)
-[![Релиз](https://img.shields.io/github/v/release/conquerAmongUs/MMPuL
-)](https://github.com/conquerAmongUs/MMPuL/releases/latest)
-[![Скачивания](https://img.shields.io/github/downloads/conquerAmongUs/MMPuL/latest/total
-)](https://github.com/conquerAmongUs/MMPuL/releases/latest)
 
 **MMPuL** - является host-only модом без Mod-Protocol что означает для игры мод необходимо устанавливать только хосту лобби а так же что лобби с этим модом будут видны в публичном списке.
 
@@ -83,7 +83,7 @@ ___
 - Настройка шанса смерти при использовании лестницы
 - Возможность разрешить игрокам смену цвета командой `/color`
 
-<a name="download-guide"></a>
+
 ## ❓ Как установить мод?
 
 1. Скачайте загрузчик модов BepInEx 6.0.0
