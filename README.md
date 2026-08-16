@@ -5,6 +5,7 @@
   <a href="https://t.me/hostmods"><img src="https://img.shields.io/badge/hostmods-2CA5E0?logo=telegram&logoColor=white" alt="ТГК"></a>
   <a href="https://github.com/conquerAmongUs/MMPuL/releases/latest"><img src="https://img.shields.io/github/v/release/conquerAmongUs/MMPuL" alt="Релиз"></a>
   <a href="https://github.com/conquerAmongUs/MMPuL/releases/latest"><img src="https://img.shields.io/github/downloads/conquerAmongUs/MMPuL/latest/total" alt="Скачивания"></a>
+  <a href="https://github.com/conquerAmongUs/MMPuL/releases/latest"><img src="https://img.shields.io/github/downloads/conquerAmongUs/MMPuL/total" alt="Скачивания тотал"></a>
 </p>
 
 
@@ -89,10 +90,8 @@ ___
 1. Скачайте загрузчик модов BepInEx 6.0.0
     - Для **Steam** и **Itch**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x86-6.0.0-be.735%2B5fef357.zip)
     - Для **Microsoft Store** и **Epic Games**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.735%2B5fef357.zip)
-2. Распаковать скачанный архив в корневую папку игры.
-3. Скачать [последний релиз MMPuL](https://github.com/conquerAmongUs/MMPuL/releases/latest) и переместить в: `\BepInEx\plugins`
+2. Разархивируйте скачанный архив в корневую папку игры.
+3. Скачайте [MMPuL](https://github.com/conquerAmongUs/MMPuL/releases/latest) и переместите в: `\BepInEx\plugins`
 4. Запустите игру.
 
-**Готово!**
-
-(если что-то пошло не так, обратитесь за помощью в тг-канале: [![ТГК](https://img.shields.io/badge/hostmods-2CA5E0?logo=telegram&logoColor=white)](https://t.me/hostmods))
+(если что-то пошло не так, обратитесь за помощью в [тгк](https://t.me/hostmods))
