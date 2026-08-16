@@ -17,7 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.8.1")]
+    [BepInPlugin("com.example.multimode", "MMPuL", "1.9.0")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -27,11 +27,18 @@ namespace MultiModeMod
 		ТАК КАК МНЕ ЛЕНЬ ИХ УДАЛЯТЬ
 		
 		*/
-        //public enum GameMode { Standard, MiniGames, Zombie, HotPotato, FreezeTag }
+		public enum GM {
+			Classic,
+			Zombie,
+			HotPotato,
+			FreezeTag,
+			Traffic,
+			FFA,
+			CNR
+		}
         public static int GameModeTab = 1;
 		public static int SettingTab = 1;
 		
-        //public static GameMode CurrentMode = GameMode.Standard;
         public static bool ShowMenu = true;
 		public static IGameOptions SavedLobbyOptionsBackup = null;
 		public static bool NeedToResetLobby = false;
@@ -147,7 +154,7 @@ namespace MultiModeMod
 		// Словарь для отслеживания времени последней поимки: <PlayerId, Time>
 		private static Dictionary<int, float> _copCatchCooldowns = new Dictionary<int, float>();
 		
-        // Наш костыль-база данных: Ключ - PlayerId, Значение - ID цвета (3 - голубой, 15 - зеленый)
+        // Ключ - PlayerId, Значение - ID цвета
         public static Dictionary<byte, int> TrackedColors = new Dictionary<byte, int>();
 
         public override void Load()
@@ -192,7 +199,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.8.1 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.0 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -665,6 +672,18 @@ namespace MultiModeMod
 			}
 		}
 		
+		[HarmonyPatch(typeof(NetworkedPlayerInfo), nameof(NetworkedPlayerInfo.RpcSetTasks))]
+		public static class RpcSetTasksPatch
+		{
+			public static void Postfix(NetworkedPlayerInfo __instance, byte[] taskTypeIds)
+			{
+				if (taskTypeIds == null || taskTypeIds.Length == 0) return;
+				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5)
+				{
+					Coroutines.Instance.CoClearTaskStart(__instance);
+				}
+			}
+		}
 		[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
 		public static class MurderPlayerPatch
 		{
@@ -677,6 +696,19 @@ namespace MultiModeMod
 				{
 					target.RpcSetRole(RoleTypes.CrewmateGhost, true);
 				}
+			}
+		}
+		[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.RpcMurderPlayer))]
+		public static class RpcMurderPlayerPatch
+		{
+			public static bool Prefix(PlayerControl __instance, PlayerControl target, bool didSucceed)
+			{
+				if (!__instance.Data.IsDead && IsFFAActive)
+				{
+					target.RpcSetRole(RoleTypes.CrewmateGhost, true);
+					return false;
+				}
+				return true;
 			}
 		}
 		[HarmonyPatch(typeof(IGameOptionsExtensions), nameof(IGameOptionsExtensions.GetAdjustedNumImpostors))]
@@ -900,31 +932,23 @@ namespace MultiModeMod
 		private static void UpdateZombieMode()
 		{
 			if (!_zombieGameActive) return;
-
-			// 1. Честный таймер 10 секунд на появление Нулевого Пациента
-			// В начале файла или класса добавь переменную для хранения ID предателя (если её еще нет)
-			// private sbyte _savedImpostorId = -1;
-
+			
+			// 1. Проверка на выход сохраненного преда в любой момент игры
+			if (_savedImpostorId != -1 && !_patientZeroSpawned)
+			{
+				var savedPlayer = GameData.Instance.GetPlayerById((byte)_savedImpostorId);
+				// Если игрок отсутствует, отключился (Disconnected) или его объект уничтожен
+				if (savedPlayer == null || savedPlayer.Disconnected || savedPlayer.Object == null)
+				{
+					_zombieGameActive = false;
+					UnityEngine.Debug.Log("[MMPuL] Нулевой пациент вышел из игры.");
+					GameManager.Instance.RpcEndGame(GameOverReason.ImpostorDisconnect, false);
+					return;
+				}
+			}
+			
 			if (!_patientZeroSpawned)
 			{
-				// 1. МГНОВЕННАЯ ЗАЩИТА: Забираем кнопку KILL в первую же секунду раунда
-				/* if (_zombieTimer < 10f) 
-				{
-					foreach (var p in GameData.Instance.AllPlayers)
-					{
-						// Находим оригинального импостора, которого выбрала игра
-						if (p != null && p.Role != null && p.Role.IsImpostor && p.Object != null)
-						{
-							_savedImpostorId = (sbyte)p.PlayerId; // Запоминаем его ID на будущее
-							
-							// Мгновенно превращаем его в мирного для сети, лишая кнопки убийства
-							p.Object.RpcSetRole(RoleTypes.Crewmate, true);
-							UnityEngine.Debug.Log($"[Mod] Кнопка KILL заблокирована! Предатель {p.PlayerName} временно стал мирным.");
-							break;
-						}
-					}
-				} */
-
 				_zombieTimer += Time.deltaTime;
 
 				// 2. АКТИВАЦИЯ ЗОМБИ: Через 25 секунд превращаем его в Нулевого Пациента
@@ -961,15 +985,37 @@ namespace MultiModeMod
 			
 			// 2. Проверка дистанций касания (только после того, как зомби появился)
 			if (!_patientZeroSpawned) return; // Пока таймер не вышел, никто никого не заражает
+			
+			// Дополнительная проверка: если нулевой пациент появился, 
+			// считаем количество живых зомби (цвет == 2)
+			int livingZombiesCount = 0;
+			foreach (var p in GameData.Instance.AllPlayers)
+			{
+				if (p != null && p.Object != null && !p.IsDead && !p.Disconnected)
+				{
+					if (GetPlayerColor(p.Object) == 2)
+					{
+						livingZombiesCount++;
+					}
+				}
+			}
+
+			// Если зомби 0
+			if (livingZombiesCount == 0)
+			{
+				_zombieGameActive = false;
+				UnityEngine.Debug.Log("[MMPuL] Все зомби вышли из игры.");
+				GameManager.Instance.RpcEndGame(GameOverReason.ImpostorDisconnect, false);
+				return;
+			}
 			// Отсчет времени идет только после спавна зомби
 			_zombieMatchTimer += Time.deltaTime;
 
-			// Если время вышло — зомби побеждают
 			if (_zombieMatchTimer >= ZombieMatchDuration)
 			{
 				_zombieGameActive = false;
 				UnityEngine.Debug.Log("[MMPuL] Зомби проиграли по времени");
-				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+				Coroutines.Instance.CoEndGameStart(false, GM.Zombie);
 				return;
 			}
 
@@ -1024,7 +1070,7 @@ namespace MultiModeMod
                 {
                     if (p != null && p.Object != null && !p.IsDead && !p.Role.IsImpostor)
                     {
-						Coroutines.Instance.CoEndGameStart(GameOverReason.ImpostorsByKill);
+						Coroutines.Instance.CoEndGameStart(true, GM.Zombie);
                     }
                 }
 			}
@@ -1059,7 +1105,7 @@ namespace MultiModeMod
 			{
 				_potatoGameActive = false;
 				UnityEngine.Debug.Log("[MMPuL] Время вышло! Выжившие победили!");
-				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+				Coroutines.Instance.CoEndGameStart(true, GM.HotPotato);
 				return;
 			}
 
@@ -1130,7 +1176,7 @@ namespace MultiModeMod
 				{
 					// Если людей больше вообще не осталось — завершаем игру
 					_potatoGameActive = false;
-					Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+					Coroutines.Instance.CoEndGameStart(true, GM.HotPotato);
 				}
 				return; // Выходим из этого кадра Update, чтобы не выполнять код ниже
 			}
@@ -1169,7 +1215,7 @@ namespace MultiModeMod
 					else
 					{
 						_potatoGameActive = false;
-						Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+						Coroutines.Instance.CoEndGameStart(true, GM.HotPotato);
 					}
 					return;
 				}
@@ -1210,7 +1256,7 @@ namespace MultiModeMod
         private static void UpdateFreezeTagMode()
 		{
 			if (!_freezeTagGameActive) return;
-
+			if (HudManager.Instance.IsIntroDisplayed) return;
 			// Защита: Если игра запущена не в Прятках, мгновенно выключаем режим во избежание киков античита
 			var currentOptions = GameManager.Instance.LogicOptions.currentGameOptions;
 			if (currentOptions.GameMode != GameModes.HideNSeek && currentOptions.GameMode != GameModes.SeekFools)
@@ -1221,11 +1267,9 @@ namespace MultiModeMod
 
 			_freezeTagGlobalTimer += Time.deltaTime;
 
-			// 1. СТАДИЯ НАЧАЛА: 10 секунд ожидания (разбежаться), затем выбор Салок
+			// 1. СТАДИЯ НАЧАЛА
 			if (!_freezeTagStarted)
 			{
-				if (_freezeTagGlobalTimer < 10f) {return;}
-
 				// Прошло 10 секунд — выбираем случайных Салок
 				List<PlayerControl> pool = new List<PlayerControl>();
 				foreach (var p in GameData.Instance.AllPlayers)
@@ -1267,7 +1311,7 @@ namespace MultiModeMod
 			{
 				_freezeTagGameActive = false;
 				UnityEngine.Debug.Log("[MMPuL] Время вышло! Мирные победили!");
-				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
+				Coroutines.Instance.CoEndGameStart(false, GM.FreezeTag);
 				return;
 			}
 
@@ -1324,7 +1368,7 @@ namespace MultiModeMod
 			{
 				_freezeTagGameActive = false;
 				UnityEngine.Debug.Log("[MMPuL] Все мирные заморожены! Салки победили!");
-				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
+				Coroutines.Instance.CoEndGameStart(true, GM.FreezeTag);
 				return;
 			}
 
@@ -1396,14 +1440,14 @@ namespace MultiModeMod
 		private static void UpdateTrafficLightMode()
 		{
 			if (!_trafficGameActive) return;
-
+			if (HudManager.Instance.IsIntroDisplayed) return;
 			_trafficStateTimer += Time.deltaTime;
 			_trafficGlobalTimer += Time.deltaTime;
 			if (_trafficGlobalTimer >= TrafficMatchDuration)
 			{
 				_trafficGameActive = false;
 				UnityEngine.Debug.Log("[MMPuL] Время вышло!");
-				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+				Coroutines.Instance.CoEndGameStart(true, GM.Traffic);
 				return;
 			}
 			// --- 1. АВТОМАТ СВЕТОФОРА (ПЕРЕКЛЮЧЕНИЕ СОСТОЯНИЙ) ---
@@ -1544,7 +1588,7 @@ namespace MultiModeMod
 						{
 							_trafficGameActive = false;
 							UnityEngine.Debug.Log($"[MMPuL] {p.PlayerName} победил первым!");
-							Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask, 0.5f);
+							Coroutines.Instance.CoEndGameStart(true, GM.Traffic);
 							return;
 						}
 					}
@@ -1573,12 +1617,12 @@ namespace MultiModeMod
 			if (alivePlayersCount == 0) // Никто не выжил
 			{
 				_trafficGameActive = false;
-				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+				Coroutines.Instance.CoEndGameStart(true, GM.Traffic);
 			}
 			else if (!_trafficOnlyOne && completedPlayersCount == alivePlayersCount) // Все выжившие выполнили квесты
 			{
 				_trafficGameActive = false;
-				Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+				Coroutines.Instance.CoEndGameStart(true, GM.Traffic);
 			}
 		}
 		private static void UpdateCopsAndRobbersMode()
@@ -1595,7 +1639,7 @@ namespace MultiModeMod
 			if (_copsGlobalTimer >= CopsMatchDuration)
 			{
 				_copsGameActive = false;
-				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
+				Coroutines.Instance.CoEndGameStart(false, GM.CNR);
 				UnityEngine.Debug.Log("[MMPuL] Время вышло!");
 				return;
 			}
@@ -1672,14 +1716,14 @@ namespace MultiModeMod
 			if (allTasksDone && anyRobberFree)
 			{
 				_copsGameActive = false;
-				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
+				Coroutines.Instance.CoEndGameStart(false, GM.CNR);
 				UnityEngine.Debug.Log("[MMPuL] Все задания выполнены");
 				return;
 			}
 			if (allJailed && players.Count > 1)
 			{
 				_copsGameActive = false;
-				Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_CrewmatesByTimer);
+				Coroutines.Instance.CoEndGameStart(true, GM.CNR);
 				UnityEngine.Debug.Log("[MMPuL] Все пойманы");
 				return;
 			}
@@ -1931,7 +1975,7 @@ namespace MultiModeMod
 					}
 					if (alivePlayers <= 1)
 					{
-						Coroutines.Instance.CoEndGameStart(GameOverReason.CrewmatesByTask);
+						Coroutines.Instance.CoEndGameStart(true, GM.FFA);
 						return false;
 					}
 				}
@@ -1965,7 +2009,7 @@ namespace MultiModeMod
 					}
 					if (alivePlayers <= 1)
 					{
-						Coroutines.Instance.CoEndGameStart(GameOverReason.HideAndSeek_ImpostorsByKills);
+						Coroutines.Instance.CoEndGameStart(true, GM.FFA);
 						return false;
 					}
 				}
@@ -1984,6 +2028,10 @@ namespace MultiModeMod
 				{
 					if (IsSSPartyActive) {Coroutines.Instance.CoSSPartyStart(PlayerControl.AllPlayerControls[UnityEngine.Random.Range(0, PlayerControl.AllPlayerControls.Count)]);}
 					if (IsSSPartySwapActive) {Coroutines.Instance.CoSSPartySwapStart();}
+				}
+				else if (IsSSPartyActive || IsSSPartySwapActive)
+				{
+					Coroutines.Instance.CoSSPartyGhostBackStart();
 				}
 				// Если идет кастомная мини-игра, нажатие на Report просто игнорируется
 				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8)
@@ -2055,10 +2103,10 @@ namespace MultiModeMod
 					!Input.GetKey(KeyCode.LeftControl) &&
 					!Input.GetKey(KeyCode.RightControl)) return true;
 				float step = 0.05f;
-				if (__instance.Increment >= 1f) step = 1f;
+				if (__instance.Increment >= 1f && __instance.Title != StringNames.GameKillCooldown) step = 1f;
 				__instance.Value += step;
 				__instance.Value = Mathf.Min(__instance.Value, __instance.ValidRange.max);
-				
+				if (__instance.Value == 0.05f && __instance.Title == StringNames.GameKillCooldown) __instance.Value = 2.50f;
 				__instance.UpdateValue();
 				__instance.OnValueChanged.Invoke(__instance);
 				__instance.AdjustButtonsActiveState();
@@ -2114,6 +2162,14 @@ namespace MultiModeMod
 				
 				if (__instance.Title == StringNames.GuardianAngelDuration)
 					__instance.ValidRange = new FloatRange(1f,60f);
+				
+				if (__instance.Title == StringNames.MaxVentUses ||
+					__instance.Title == StringNames.MaxTimeInVent
+					) __instance.ValidRange = new FloatRange(0f,50f);
+					
+				if (__instance.Title == StringNames.EscapeTime ||
+					__instance.Title == StringNames.FinalEscapeTime
+					) __instance.ValidRange = new FloatRange(0f,300f);
 				
 				__instance.AdjustButtonsActiveState();
 			}
@@ -2262,15 +2318,120 @@ namespace MultiModeMod
 			yield return new WaitForSeconds(1f);
 			p.MyPhysics.RpcBootFromVent(ventId);
 		}
-		
-		public void CoEndGameStart(GameOverReason reason, float waitsec = 1f)
+		public bool IsEndingGame { get; private set; }
+		public void CoEndGameStart(bool teamwin = false, MultiModePlugin.GM gm = MultiModePlugin.GM.Classic, float waitsec = 1f)
 		{
-			StartCoroutine(CoEndGame(reason, waitsec).WrapToIl2Cpp());
+			if (IsEndingGame) return;
+			IsEndingGame = true;
+			StartCoroutine(CoEndGame(teamwin, gm, waitsec).WrapToIl2Cpp());
 		}
-		private IEnumerator CoEndGame(GameOverReason reason, float waitsec = 1f)
+		private IEnumerator CoEndGame(bool teamwin = false, MultiModePlugin.GM gm = MultiModePlugin.GM.Classic, float waitsec = 1f)
 		{
+			yield return new WaitForSeconds(0.2f);
+			if (gm == MultiModePlugin.GM.Zombie)
+			{
+				var tc = MultiModePlugin.TrackedColors;
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					if (!tc.TryGetValue(player.PlayerId, out int colorId))
+						continue;
+					if (colorId == 2)
+						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+					else
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.HotPotato)
+			{
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					if (player.Data.IsDead)
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+					else batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.FreezeTag)
+			{
+				var tc = MultiModePlugin.TrackedColors;
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					if (!tc.TryGetValue(player.PlayerId, out int colorId))
+						continue;
+					if (colorId == 0)
+						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+					else
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.Traffic)
+			{
+				var tc = MultiModePlugin.TrackedColors;
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					if (!tc.TryGetValue(player.PlayerId, out int colorId))
+						continue;
+					if (colorId == 10)
+						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+					else
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.FFA)
+			{
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					
+					if (!player.Data.IsDead)
+						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+					else
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.CNR)
+			{
+				var tc = MultiModePlugin.TrackedColors;
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+				{
+					if (player == null || player.Data == null) continue;
+					if (!tc.TryGetValue(player.PlayerId, out int colorId))
+						continue;
+					if (colorId == 1)
+						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
+					else
+						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
 			yield return new WaitForSeconds(waitsec);
-			GameManager.Instance.RpcEndGame(reason, false);
+			if (teamwin)
+			{
+				UnityEngine.Debug.Log($"[MMPuL] CoEndGame Победа предателей");
+				if (GameOptionsManager.Instance.CurrentGameOptions.GameMode == GameModes.HideNSeek) GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_ImpostorsByKills, false);
+				else GameManager.Instance.RpcEndGame(GameOverReason.ImpostorsByKill, false);
+			}
+			else
+			{
+				UnityEngine.Debug.Log($"[MMPuL] CoEndGame Победа мирных");
+				if (GameOptionsManager.Instance.CurrentGameOptions.GameMode == GameModes.HideNSeek) GameManager.Instance.RpcEndGame(GameOverReason.HideAndSeek_CrewmatesByTimer, false);
+				else GameManager.Instance.RpcEndGame(GameOverReason.CrewmatesByTask, false);
+			}
+			IsEndingGame = false;
 		}
 		
 		public void CoChaosModeStart()
@@ -2362,17 +2523,27 @@ namespace MultiModeMod
 			foreach(PlayerControl player in PlayerControl.AllPlayerControls)
 			{
 				if (target == null) {target = PlayerControl.AllPlayerControls[UnityEngine.Random.Range(0, PlayerControl.AllPlayerControls.Count)];}
-				// if(player == target || player.shapeshiftTargetPlayerId == target.PlayerId) continue;
-				if (player == null || player.Data == null || player.Data.IsDead) continue;
+				if (player == null || player.Data == null) continue;
+				if (player.shapeshiftTargetPlayerId == player.PlayerId) continue;
+				
 				BatchedMessage batch = new BatchedMessage();
 				RoleTypes currentRole = player.Data.RoleType;
-
+				
 				batch.QueueSetRole(player, RoleTypes.Shapeshifter, true);
-				batch.QueueShapeshift(player, target, false);
+				if (player.Data.IsDead)
+				{
+					batch.QueueShapeshift(player, player, false);
+					UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в себя");
+				}
+				else
+				{
+					batch.QueueShapeshift(player, target, false);
+					UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
+				}
+				
 				batch.QueueSetRole(player, currentRole, true);
 				
 				batch.FinishBatch();
-				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
 				// This function can send up to 42 reliable messages at once, so we need to implement a delay to avoid getting disconnected
 				yield return Effects.Wait(0.05f);
 			}
@@ -2414,27 +2585,35 @@ namespace MultiModeMod
 				}
 
 			} while (HasSelfTarget(players, targets));
-
+			
 			for (int i = 0; i < players.Count; i++)
 			{
 				PlayerControl player = players[i];
 				PlayerControl target = targets[i];
 				
-				if (player == null || player.Data == null || player.Data.IsDead) continue;
+				if (player == null || player.Data == null) continue;
 				if (target == null || target.Data == null) continue;
+				if (player.shapeshiftTargetPlayerId == player.PlayerId) continue;
 				BatchedMessage batch = new BatchedMessage();
 				RoleTypes currentRole = player.Data.RoleType;
 
 				batch.QueueSetRole(player, RoleTypes.Shapeshifter, true);
-				batch.QueueShapeshift(player, target, false);
+				if (player.Data.IsDead)
+				{
+					batch.QueueShapeshift(player, player, false);
+					UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в себя");
+				}
+				else
+				{
+					batch.QueueShapeshift(player, target, false);
+					UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
+				}
 				batch.QueueSetRole(player, currentRole, true);
 
 				batch.FinishBatch();
-				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в {target.Data.PlayerName}");
 				yield return Effects.Wait(0.05f);
 			}
 		}
-
 		private bool HasSelfTarget(List<PlayerControl> players, List<PlayerControl> targets)
 		{
 			for (int i = 0; i < players.Count; i++)
@@ -2444,6 +2623,31 @@ namespace MultiModeMod
 			}
 
 			return false;
+		}
+		public void CoSSPartyGhostBackStart()
+		{
+			StartCoroutine(CoSSPartyGhostBack().WrapToIl2Cpp());
+		}
+		private IEnumerator CoSSPartyGhostBack()
+		{
+			foreach(PlayerControl player in PlayerControl.AllPlayerControls)
+			{
+				if (player == null || player.Data == null) continue;
+				if (!player.Data.IsDead) continue;
+				if (player.shapeshiftTargetPlayerId == player.PlayerId) continue;
+				BatchedMessage batch = new BatchedMessage();
+				RoleTypes currentRole = player.Data.RoleType;
+				
+				batch.QueueSetRole(player, RoleTypes.Shapeshifter, true);
+				batch.QueueShapeshift(player, player, false);
+				UnityEngine.Debug.Log($"[MMPuL] {player.Data.PlayerName} превращен в себя");
+				
+				batch.QueueSetRole(player, currentRole, true);
+				
+				batch.FinishBatch();
+				// This function can send up to 42 reliable messages at once, so we need to implement a delay to avoid getting disconnected
+				yield return Effects.Wait(0.05f);
+			}
 		}
 		
 		public void CoFFAModeStart()
@@ -2468,6 +2672,20 @@ namespace MultiModeMod
 
 				yield return Effects.Wait(0.05f);
 			}
+		}
+		
+		public void CoClearTaskStart(NetworkedPlayerInfo p)
+		{
+			StartCoroutine(CoClearTask(p).WrapToIl2Cpp());
+		}
+		private IEnumerator CoClearTask(NetworkedPlayerInfo p)
+		{
+			UnityEngine.Debug.Log($"[MMPuL] Ожидание очищения заданий");
+			while (HudManager.Instance.IsIntroDisplayed) yield return null;
+			if (p == null) yield break;
+			
+			p.RpcSetTasks(Array.Empty<byte>());
+			UnityEngine.Debug.Log($"[MMPuL] Задания очищены для {p.PlayerName}");
 		}
 	}
 	public class BatchedMessage
