@@ -17,7 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("com.example.multimode", "MMPuL", "1.9.0")]
+    [BepInPlugin("MMPuL", "MMPuL", "1.9.1")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -66,6 +66,16 @@ namespace MultiModeMod
 		// minigames
 		private static float _miniGamesTimer = 0f;
 		private static bool _miniGamesApplied = false;
+		
+		private static Dictionary<byte, int> MiniGameCloneFails = new Dictionary<byte, int>();
+		private static int MiniGameCloneMaxFails = 2;
+		private static bool MiniGameCloneActive = false;
+		private static bool MiniGameClone = false;
+		
+		private static Dictionary<byte, int> MiniGameSchoolFails = new Dictionary<byte, int>();
+		private static int MiniGameSchoolMaxFails = 2;
+		private static bool MiniGameSchoolActive = false;
+		private static bool MiniGameSchool = false;
 		// zombie
         public static float InfectionDistance = 1.5f;
 		public static float ZombieMatchDuration = 60f; // Выбранная длительность матча в меню (по умолчанию 60с)
@@ -199,7 +209,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.0 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.1 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -227,14 +237,18 @@ namespace MultiModeMod
 				scrollPos = GUILayout.BeginScrollView(scrollPos, GUILayout.Width(120));
 				if (!InSettings)
 				{
-					if (GUILayout.Button("<size=10px>Стандартный</size>")) {GameModeTab = 1;}
-					if (GUILayout.Button("<size=10px>Мини-игры</size>")) {GameModeTab = 2;}
-					if (GUILayout.Button("<size=10px>Зомби</size>")) {GameModeTab = 3;}
-					if (GUILayout.Button("<size=10px>Hot Картошка</size>")) {GameModeTab = 4;}
-					if (GUILayout.Button("<size=10px>Заморозки</size>")) {GameModeTab = 5;}
-					if (GUILayout.Button("<size=10px>Светофор</size>")) {GameModeTab = 6;}
-					if (GUILayout.Button("<size=10px>ФФА</size>")) {GameModeTab = 7;}
-					if (GUILayout.Button("<size=10px>Копы&Робберс</size>")) {GameModeTab = 8;}
+					InnerNetClient.GameStates a;
+					if (AmongUsClient.Instance != null) a = AmongUsClient.Instance.GameState;
+					else a = InnerNetClient.GameStates.Started;
+					var b = InnerNetClient.GameStates.Started;
+					if (GUILayout.Button("<size=10px>Стандартный</size>") && a != b) {GameModeTab = 1;}
+					if (GUILayout.Button("<size=10px>Мини-игры</size>") && a != b) {GameModeTab = 2;}
+					if (GUILayout.Button("<size=10px>Зомби</size>") && a != b) {GameModeTab = 3;}
+					if (GUILayout.Button("<size=10px>Hot Картошка</size>") && a != b) {GameModeTab = 4;}
+					if (GUILayout.Button("<size=10px>Заморозки</size>") && a != b) {GameModeTab = 5;}
+					if (GUILayout.Button("<size=10px>Светофор</size>") && a != b) {GameModeTab = 6;}
+					if (GUILayout.Button("<size=10px>ФФА</size>") && a != b) {GameModeTab = 7;}
+					if (GUILayout.Button("<size=10px>Копы&Робберс</size>") && a != b) {GameModeTab = 8;}
 				}
 				else
 				{
@@ -298,7 +312,20 @@ namespace MultiModeMod
 						case 2:
 							GUILayout.Label("<b>Мини-игры</b>");
 							GUILayout.Space(10);
-							GUILayout.Label("На данный момент в этом режиме\nпредатели просто красятся в красный а мирные в голубой.");
+							MiniGameClone = GUILayout.Toggle(MiniGameClone, "Мини-игра \"Клон\"");
+							if (MiniGameClone)
+							{
+								MiniGameSchool = false;
+								GUILayout.Label($"Максимальное кол-во ошибок: {MiniGameCloneMaxFails:F0}");
+								MiniGameCloneMaxFails = Mathf.RoundToInt(GUILayout.HorizontalSlider(MiniGameCloneMaxFails, 0f, 5f));
+							}
+							MiniGameSchool = GUILayout.Toggle(MiniGameSchool, "Мини-игра \"Школа\"");
+							if (MiniGameSchool)
+							{
+								MiniGameClone = false;
+								GUILayout.Label($"Максимальное кол-во ошибок: {MiniGameSchoolMaxFails:F0}");
+								MiniGameSchoolMaxFails = Mathf.RoundToInt(GUILayout.HorizontalSlider(MiniGameSchoolMaxFails, 0f, 5f));
+							}
 							break;
 
 						case 3:
@@ -496,6 +523,7 @@ namespace MultiModeMod
 						case 3:
 							GUILayout.Label("<b>Настройки прочее</b>");
 							GUILayout.Space(10);
+							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {IsPlayerInRoom(PlayerControl.LocalPlayer)}");
 							break;
 
 						default:
@@ -522,9 +550,45 @@ namespace MultiModeMod
 				return result;
 			}
         }
+		private static readonly HashSet<(byte Map, SystemTypes Room)> Hallways = new()
+		{
+			(1, SystemTypes.Decontamination),
+			(1, SystemTypes.Balcony),
+			(2, SystemTypes.Dropship),
+			(4, SystemTypes.HallOfPortraits),
+			(5, SystemTypes.UpperEngine),
+			(5, SystemTypes.Dropship),
+		};
+		public static bool IsPlayerInRoom(PlayerControl player)
+		{
+			if (!player) return false;
+			var rooms = PlayerRooms(player);
+			if (rooms.Count == 0) return false;
+			foreach (var room in rooms)
+			{
+				if (!room) return false;
+				if (room.RoomId is SystemTypes.Hallway) return false;
+
+				if (Hallways.Contains((GameOptionsManager.Instance.CurrentGameOptions.MapId, room.RoomId))) return false;
+			}
+			return true;
+		}
+		public static List<PlainShipRoom> PlayerRooms(PlayerControl player)
+		{
+			var rooms = new List<PlainShipRoom>();
+			if (!player) return rooms;
+			if (!ShipStatus.Instance) return rooms;
+			foreach (var room in ShipStatus.Instance.AllRooms)
+			{
+				var area = room.roomArea;
+				if (!area) continue;
+				if (player.Collider.IsTouching(area)) rooms.Add(room);
+			}
+			return rooms;
+		}
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.Update))]
-        public static class ControlsPatch
+        public static class UpdatePatch
         {
             public static void Postfix()
             {
@@ -592,9 +656,14 @@ namespace MultiModeMod
 						_zombieGameActive = false;
 						_patientZeroSpawned = false;
 						_zombieTimer = 0f;
+						_zombieMatchTimer = 0f;
+						
 						_miniGamesApplied = false;
 						_miniGamesTimer = 0f;
-						_zombieMatchTimer = 0f;
+						MiniGameCloneActive = false;
+						MiniGameCloneFails.Clear();
+						MiniGameSchoolActive = false;
+						MiniGameSchoolFails.Clear();
 						
 						// Сброс Hot Potato
 						_potatoGameActive = false;
@@ -687,9 +756,39 @@ namespace MultiModeMod
 		[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
 		public static class MurderPlayerPatch
 		{
-			[HarmonyPostfix]
 			public static void Postfix(PlayerControl __instance, PlayerControl target, MurderResultFlags resultFlags)
 			{
+				if (GameModeTab == 2)
+				{
+					if (MiniGameCloneActive)
+					{
+						if (__instance.shapeshiftTargetPlayerId != target.PlayerId)
+						{
+							if (!MiniGameCloneFails.ContainsKey(__instance.PlayerId)) MiniGameCloneFails[__instance.PlayerId] = 0;
+							MiniGameCloneFails[__instance.PlayerId]++;
+							UnityEngine.Debug.Log($"[MMPuL] {__instance.Data.PlayerName} убил игрока в которого не был заморфлен.");
+							if (MiniGameCloneFails[__instance.PlayerId] > MiniGameCloneMaxFails)
+							{
+								__instance.RpcSetRole(RoleTypes.ImpostorGhost, true);
+								UnityEngine.Debug.Log($"[MMPuL] {__instance.Data.PlayerName} превращаен в призрака.");
+							}
+						}
+					}
+					if (MiniGameSchoolActive)
+					{
+						if (IsPlayerInRoom(target))
+						{
+							if (!MiniGameSchoolFails.ContainsKey(__instance.PlayerId)) MiniGameSchoolFails[__instance.PlayerId] = 0;
+							MiniGameSchoolFails[__instance.PlayerId]++;
+							UnityEngine.Debug.Log($"[MMPuL] {__instance.Data.PlayerName} убил игрока в комнате.");
+							if (MiniGameSchoolFails[__instance.PlayerId] > MiniGameSchoolMaxFails)
+							{
+								__instance.RpcSetRole(RoleTypes.ImpostorGhost, true);
+								UnityEngine.Debug.Log($"[MMPuL] {__instance.Data.PlayerName} превращаен в призрака.");
+							}
+						}
+					}
+				}
 				if (__instance == null || target == null) return;
 				if (!IsFFAActive) return;
 				if (!__instance.Data.IsDead)
@@ -837,6 +936,8 @@ namespace MultiModeMod
 				{
 					_miniGamesTimer = 0f;
 					_miniGamesApplied = false; // Разрешаем запуск таймера мини-игры
+					if (MiniGameClone) MiniGameCloneActive = true;
+					if (MiniGameSchool) MiniGameSchoolActive = true;
 				}
 				else if (GameModeTab == 3)
 				{
@@ -1661,7 +1762,7 @@ namespace MultiModeMod
 					if (color == 1)
 					{
 						int mapId = GameManager.Instance.LogicOptions.MapId;
-						int maxVents = mapId switch { 0 => 13, 1 => 11, 2 => 11, 3 => 11, 4 => 9, _ => 11 };
+						int maxVents = mapId switch { 0 => 13, 1 => 11, 2 => 11, 3 => 13, 4 => 11, 5 => 9, _ => 11 };
 						int ventId = UnityEngine.Random.Range(0, maxVents);
 						
 						pc.MyPhysics.RpcBootFromVent(ventId);
@@ -1779,7 +1880,7 @@ namespace MultiModeMod
 			
 			// Телепорт на случайный люк
 			int mapId = GameManager.Instance.LogicOptions.MapId;
-			int maxVents = mapId switch { 0 => 13, 1 => 11, 2 => 11, 3 => 11, 4 => 9, _ => 11 };
+			int maxVents = mapId switch { 0 => 13, 1 => 11, 2 => 11, 3 => 13, 4 => 11, 5 => 9, _ => 11 };
 			int ventId = UnityEngine.Random.Range(0, maxVents);
 			
 			p.MyPhysics.RpcBootFromVent(ventId);
@@ -2021,7 +2122,6 @@ namespace MultiModeMod
 		[HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ReportDeadBody))]
 		public static class DisableReportPatch
 		{
-			[HarmonyPrefix]
 			public static bool Prefix()
 			{
 				if (SSPartyEveryMode)
@@ -2034,7 +2134,7 @@ namespace MultiModeMod
 					Coroutines.Instance.CoSSPartyGhostBackStart();
 				}
 				// Если идет кастомная мини-игра, нажатие на Report просто игнорируется
-				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8)
+				if (MiniGameSchoolActive || MiniGameCloneActive || GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8)
 				{
 					return false; // Запретить репорт
 				}
@@ -2046,7 +2146,8 @@ namespace MultiModeMod
 		{
 			static bool Prefix()
 			{
-				if (GameModeTab != 1 && GameModeTab != 2) {return false;}
+				if (GameModeTab != 1) {return false;}
+				if (MiniGameCloneActive || MiniGameSchoolActive) return false;
 				return true;
 			}
 		}
@@ -2055,7 +2156,8 @@ namespace MultiModeMod
 		{
 			static bool Prefix()
 			{
-				if (GameModeTab != 1 && GameModeTab != 2) {return false;}
+				if (GameModeTab != 1) {return false;}
+				if (MiniGameCloneActive || MiniGameSchoolActive) return false;
 				return true;
 			}
 		}
@@ -2064,6 +2166,10 @@ namespace MultiModeMod
 		{
 			static void Postfix(Vent __instance, PlayerControl pc)
 			{
+				if (pc.Data.Role.IsImpostor)
+				{
+					if (MiniGameCloneActive || MiniGameSchoolActive) pc.MyPhysics.RpcBootFromVent(__instance.Id);
+				}
 				if (GameModeTab != 1 && GameModeTab != 2)
 				{
 					pc.MyPhysics.RpcBootFromVent(__instance.Id);
@@ -2191,6 +2297,48 @@ namespace MultiModeMod
 				sourcePlayer.RpcSetColor(colorId);
 				UnityEngine.Debug.Log($"[MMPuL] {sourcePlayer.Data.PlayerName} новый цвет {colorId}");
 			}
+		}
+		[HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.BeginCrewmate))]
+		public static class BeginCrewmatePatch
+		{
+			public static void Postfix(IntroCutscene __instance) {IntroGameMode(__instance);}
+		}
+		[HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.BeginImpostor))]
+		public static class BeginImpostorPatch
+		{
+			public static void Postfix(IntroCutscene __instance) {IntroGameMode(__instance);}
+		}
+		private static void IntroGameMode(IntroCutscene __instance)
+		{
+			var color = new Color(1f, 1f, 1f);
+			switch (GameModeTab)
+			{
+				case 3:
+					__instance.TeamTitle.text = "Зомби Режим";
+					color = new Color(0f, 0.80f, 0f);
+					break;
+
+				case 4:
+					__instance.TeamTitle.text = "<size=12>Горячая Картошка</size>";
+					color = new Color(1f, 0.65f, 0f);
+					break;
+
+				case 6:
+					__instance.TeamTitle.text = "Светофор";
+					color = new Color(0f, 1f, 0f);
+					break;
+				
+				case 7:
+					__instance.TeamTitle.text = "<size=10>Каждый Сам За Себя</size>";
+					color = new Color(0f, 1f, 1f);
+					break;
+
+				default:
+					return;
+			}
+			__instance.TeamTitle.color = color;
+			__instance.BackgroundBar.material.SetColor("_Color", color);
+			__instance.ImpostorText.text = "github.com/conquerAmongUs/MMPuL";
 		}
 		
 		internal class CustomNetworkHelper
@@ -2730,43 +2878,6 @@ namespace MultiModeMod
 			writer.Write((byte)RpcCalls.Shapeshift);
 			writer.WriteNetObject(target);
 			writer.Write(shouldAnimate);
-			writer.EndMessage();
-		}
-
-		public void QueueSpawn(InnerNetObject netObject, int ownerId = -2, SpawnFlags flags = SpawnFlags.None)
-		{
-			SpawnGameDataMessage spawn = AmongUsClient.Instance.CreateSpawnMessage(netObject, ownerId, flags);
-			spawn.Serialize(writer);
-		}
-		
-		public void QueueVotingComplete(MeetingHud.VoterState[] voteStates, NetworkedPlayerInfo ejectedPlayer, bool isTie)
-		{
-			MeetingHud.Instance.VotingComplete(voteStates, ejectedPlayer, isTie);
-
-			writer.StartMessage((byte)GameDataTypes.RpcFlag);
-			writer.WritePacked(MeetingHud.Instance.NetId);
-			writer.Write((byte)RpcCalls.VotingComplete);
-
-			writer.WritePacked(voteStates.Length);
-
-			foreach(MeetingHud.VoterState state in voteStates)
-			{
-				state.Serialize(writer);
-			}
-
-			writer.Write(ejectedPlayer.PlayerId);
-			writer.Write(isTie);
-
-			writer.EndMessage();
-		}
-		
-		public void QueueCloseMeeting()
-		{
-			MeetingHud.Instance.Close();
-
-			writer.StartMessage((byte)GameDataTypes.RpcFlag);
-			writer.WritePacked(MeetingHud.Instance.NetId);
-			writer.Write((byte)RpcCalls.CloseMeeting);
 			writer.EndMessage();
 		}
 		
