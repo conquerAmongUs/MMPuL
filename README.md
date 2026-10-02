@@ -88,8 +88,8 @@ ___
 ## ❓ Как установить мод?
 
 1. Скачайте загрузчик модов BepInEx 6.0.0
-    - Для **Steam** и **Itch**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x86-6.0.0-be.735%2B5fef357.zip)
-    - Для **Microsoft Store** и **Epic Games**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.735%2B5fef357.zip)
+    - Для **Itch**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x86-6.0.0-be.735%2B5fef357.zip)
+    - Для **Steam**, **Microsoft Store** и **Epic Games**: [Скачать](https://builds.bepinex.dev/projects/bepinex_be/735/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.735%2B5fef357.zip)
 2. Разархивируйте скачанный архив в корневую папку игры.
 3. Скачайте [MMPuL](https://github.com/conquerAmongUs/MMPuL/releases/latest) и переместите в: `\BepInEx\plugins`
 4. Запустите игру.
