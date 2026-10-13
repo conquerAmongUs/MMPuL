@@ -17,7 +17,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("MMPuL", "MMPuL", "1.9.1")]
+    [BepInPlugin("MMPuL", "MMPuL", "1.9.2")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -209,7 +209,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.1 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.2 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -744,8 +744,9 @@ namespace MultiModeMod
 		[HarmonyPatch(typeof(NetworkedPlayerInfo), nameof(NetworkedPlayerInfo.RpcSetTasks))]
 		public static class RpcSetTasksPatch
 		{
-			public static void Postfix(NetworkedPlayerInfo __instance, byte[] taskTypeIds)
+			public static void Postfix(NetworkedPlayerInfo __instance, Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte> taskTypeIds)
 			{
+				if (__instance == null) return;
 				if (taskTypeIds == null || taskTypeIds.Length == 0) return;
 				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5)
 				{
