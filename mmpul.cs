@@ -1,6 +1,7 @@
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
+using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 using AmongUs.Data;
@@ -17,7 +18,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace MultiModeMod
 {
-    [BepInPlugin("MMPuL", "MMPuL", "1.9.2")]
+    [BepInPlugin("MMPuL", "MMPuL", "1.10.0")]
     public class MultiModePlugin : BasePlugin
     {
 		/*
@@ -34,7 +35,8 @@ namespace MultiModeMod
 			FreezeTag,
 			Traffic,
 			FFA,
-			CNR
+			CNR,
+			RoomRush,
 		}
         public static int GameModeTab = 1;
 		public static int SettingTab = 1;
@@ -48,6 +50,9 @@ namespace MultiModeMod
 		public static bool NoImpLadderDChance = false;
 		public static bool AllowColorCommand = false;
 		public static bool AllowColorFortegreen = false;
+		
+		private static byte[] savedTasks = null;
+		private static bool SameTasks = false;
 		// classic
 		public static int impcount = 1;
 		public static bool MoreImpsMode = false;
@@ -93,7 +98,7 @@ namespace MultiModeMod
 		public static float PotatoDetonationTime = 15f;     // Через сколько взрывается картошка (10-30s)
 		public static float PotatoTransferCooldown = 1.0f;  // Кулдаун передачи (0.75-1.5s)
 		public static float PotatoMatchDuration = 60f;      // Длительность матча (60-300s)
-
+		
 		// hot potato системные таймеры
 		public static bool NeedToSnapHost = false;
 		public static float HostSnapTimer = 0f;
@@ -105,6 +110,7 @@ namespace MultiModeMod
 		private static byte _playerWithPotatoId = 255;      // ID игрока, у которого сейчас картошка (255 - ни у кого)
 		private static bool _potatoGameActive = false;
 		private static bool _firstPotatoSpawned = false;
+		private static bool _potatoBlackWarningTriggered = false; // <-- НОВОЕ: флаг для защиты от спама пакетами смены цвета
 		// freeze tag
 		// --- FREEZE TAG НАСТРОЙКИ ---
 		public static float FreezeDistance = 1.5f;          // Дистанция заморозки/разморозки
@@ -127,7 +133,7 @@ namespace MultiModeMod
 		public static float TrafficGreenDuration = 5f;      // Время зеленого света (3-15s)
 		public static float TrafficYellowDuration = 0.5f;    // Время желтого света (0.25-1s)
 		public static float TrafficRedDuration = 5f;        // Время красного света (3-15s)
-		public static float TrafficRedDelay = 0.5f;         // Задержка перед наказанием (0.2-1s)
+		public static float TrafficRedDelay = 2f;         // Задержка перед наказанием (0.2-1s)
 		public static float TrafficMatchDuration = 60f;   
 
 		// --- СИСТЕМНЫЕ ПЕРЕМЕННЫЕ СВЕТОФОРА ---
@@ -164,8 +170,14 @@ namespace MultiModeMod
 		// Словарь для отслеживания времени последней поимки: <PlayerId, Time>
 		private static Dictionary<int, float> _copCatchCooldowns = new Dictionary<int, float>();
 		
+		// zabeg
+		public static bool RoomRushActive = false;
+		public static float RoomRushTimer = 15f;
+		
         // Ключ - PlayerId, Значение - ID цвета
         public static Dictionary<byte, int> TrackedColors = new Dictionary<byte, int>();
+		
+		public static ConfigEntry<string> knopkaDlyaOtkritiyaMenuMMPuL;
 
         public override void Load()
         {
@@ -178,6 +190,12 @@ namespace MultiModeMod
 			UnityEngine.Object.DontDestroyOnLoad(obj);
 			obj.hideFlags = HideFlags.HideAndDontSave;
 			obj.AddComponent<Coroutines>();
+			
+			knopkaDlyaOtkritiyaMenuMMPuL = Config.Bind("MMPuL",
+                                "Key",
+                                "F3",
+                                "Кнопка для открытися меню MMPuL. Список всех доступных кнопок: https://docs.unity3d.com/Packages/com.unity.tiny@0.16/api/Unity.Tiny.Input.KeyCode.html");
+
         }
 		
         public class MMPuLGUI : MonoBehaviour
@@ -209,7 +227,7 @@ namespace MultiModeMod
 				windowStyle.onFocused.background = bg;
 				windowStyle.onActive.background = bg;
 				
-                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.9.2 by @hostmods", windowStyle);
+                _windowRect = GUI.Window(8001, _windowRect, (GUI.WindowFunction)DrawWindow, "MMPuL 1.10.0 by @hostmods", windowStyle);
             }
 			
 			private void DrawWindow(int id)
@@ -244,11 +262,12 @@ namespace MultiModeMod
 					if (GUILayout.Button("<size=10px>Стандартный</size>") && a != b) {GameModeTab = 1;}
 					if (GUILayout.Button("<size=10px>Мини-игры</size>") && a != b) {GameModeTab = 2;}
 					if (GUILayout.Button("<size=10px>Зомби</size>") && a != b) {GameModeTab = 3;}
-					if (GUILayout.Button("<size=10px>Hot Картошка</size>") && a != b) {GameModeTab = 4;}
+					if (GUILayout.Button("<size=10px>Картошка</size>") && a != b) {GameModeTab = 4;}
 					if (GUILayout.Button("<size=10px>Заморозки</size>") && a != b) {GameModeTab = 5;}
 					if (GUILayout.Button("<size=10px>Светофор</size>") && a != b) {GameModeTab = 6;}
 					if (GUILayout.Button("<size=10px>ФФА</size>") && a != b) {GameModeTab = 7;}
 					if (GUILayout.Button("<size=10px>Копы&Робберс</size>") && a != b) {GameModeTab = 8;}
+					if (GUILayout.Button("<size=10px>Забег</size>") && a != b) {GameModeTab = 9;}
 				}
 				else
 				{
@@ -312,6 +331,7 @@ namespace MultiModeMod
 						case 2:
 							GUILayout.Label("<b>Мини-игры</b>");
 							GUILayout.Space(10);
+							SameTasks = GUILayout.Toggle(SameTasks, "У всех одинаковые задания");
 							MiniGameClone = GUILayout.Toggle(MiniGameClone, "Мини-игра \"Клон\"");
 							if (MiniGameClone)
 							{
@@ -333,7 +353,7 @@ namespace MultiModeMod
 							GUILayout.Space(10);
 							
 							GUILayout.Label($"Дистанция заражения: {InfectionDistance:F1}m");
-							InfectionDistance = GUILayout.HorizontalSlider(InfectionDistance, 0.5f, 2.0f);
+							InfectionDistance = GUILayout.HorizontalSlider(InfectionDistance, 0.5f, 1.5f);
 							
 							GUILayout.Label($"Авто-победа мирных: {ZombieMatchDuration:F0}s");
 							ZombieMatchDuration = GUILayout.HorizontalSlider(ZombieMatchDuration, 30f, 120f);
@@ -343,7 +363,7 @@ namespace MultiModeMod
 							ZombieSpeedSetting = Mathf.Round(rawSpeedValue / 0.05f) * 0.05f;
 							
 							GUILayout.Label($"Зрение для Зомби: {ZombieVisionSetting:F2}x");
-							float rawVisionValue = GUILayout.HorizontalSlider(ZombieVisionSetting, 0.25f, 1.00f);
+							float rawVisionValue = GUILayout.HorizontalSlider(ZombieVisionSetting, 0.10f, 2.00f);
 							ZombieVisionSetting = Mathf.Round(rawVisionValue / 0.05f) * 0.05f;
 							break;
 							
@@ -352,11 +372,11 @@ namespace MultiModeMod
 							GUILayout.Space(10);
 							
 							GUILayout.Label($"Дистанция передачи: {InfectionDistance:F1}m");
-							InfectionDistance = GUILayout.HorizontalSlider(InfectionDistance, 0.5f, 2.0f);
+							InfectionDistance = GUILayout.HorizontalSlider(InfectionDistance, 0.5f, 1.5f);
 							PotatoTransferDistance = InfectionDistance; // Синхронизируем
 
 							GUILayout.Label($"Время взрыва картошки: {PotatoDetonationTime:F0}s");
-							PotatoDetonationTime = GUILayout.HorizontalSlider(PotatoDetonationTime, 10f, 30f);
+							PotatoDetonationTime = GUILayout.HorizontalSlider(PotatoDetonationTime, 5f, 45f);
 							PotatoDetonationTime = Mathf.Round(PotatoDetonationTime);
 
 							GUILayout.Label($"Задержка передачи: {PotatoTransferCooldown:F2}s");
@@ -386,17 +406,17 @@ namespace MultiModeMod
 							else
 							{
 								GUILayout.Label($"Дистанция контакта: {FreezeDistance:F1}m");
-								FreezeDistance = GUILayout.HorizontalSlider(FreezeDistance, 0.5f, 2.0f);
+								FreezeDistance = GUILayout.HorizontalSlider(FreezeDistance, 0.5f, 1.5f);
 
 								GUILayout.Label($"Время до смерти во льду: {FreezeDeathTime:F0}s");
 								FreezeDeathTime = Mathf.Round(GUILayout.HorizontalSlider(FreezeDeathTime, 5f, 30f));
 
 								GUILayout.Label($"Кд заморозки (Салка): {TaggerFreezeCooldown:F2}s");
-								float rawTaggerCd = GUILayout.HorizontalSlider(TaggerFreezeCooldown, 0.5f, 3.0f);
+								float rawTaggerCd = GUILayout.HorizontalSlider(TaggerFreezeCooldown, 0.5f, 5.0f);
 								TaggerFreezeCooldown = Mathf.Round(rawTaggerCd / 0.05f) * 0.05f;
 
 								GUILayout.Label($"Кд разморозки (Мирный): {CrewUnfreezeCooldown:F2}s");
-								float rawCrewCd = GUILayout.HorizontalSlider(CrewUnfreezeCooldown, 0.5f, 3.0f);
+								float rawCrewCd = GUILayout.HorizontalSlider(CrewUnfreezeCooldown, 0.5f, 5.0f);
 								CrewUnfreezeCooldown = Mathf.Round(rawCrewCd / 0.05f) * 0.05f;
 
 								GUILayout.Label($"Длительность матча: {FreezeMatchDuration:F0}s");
@@ -405,7 +425,7 @@ namespace MultiModeMod
 								GUILayout.Label($"Количество Салок: {TaggerCount}");
 								TaggerCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(TaggerCount, 1f, 3f));
 
-								GUILayout.Label($"Скорость Салки: {TaggerSpeedMod:F2}x");
+								GUILayout.Label($"Скорость Салки: {TaggerSpeedMod:F2}x (множитель)");
 								float rawSpeed = GUILayout.HorizontalSlider(TaggerSpeedMod, 1.00f, 2.00f);
 								TaggerSpeedMod = Mathf.Round(rawSpeed / 0.05f) * 0.05f;
 							}
@@ -415,24 +435,19 @@ namespace MultiModeMod
 							GUILayout.Label("<b>Светофор</b>");
 							GUILayout.Space(10);
 							// 1. Время зеленого света (Шаг: 1)
+							_trafficOnlyOne = GUILayout.Toggle(_trafficOnlyOne, "Побеждает первый выполнивший задания");
+							SameTasks = GUILayout.Toggle(SameTasks, "У всех одинаковые задания");
 							GUILayout.Label($"Время зеленого света: {TrafficGreenDuration:F0}s");
-							TrafficGreenDuration = Mathf.Round(GUILayout.HorizontalSlider(TrafficGreenDuration, 3f, 15f));
+							TrafficGreenDuration = Mathf.Round(GUILayout.HorizontalSlider(TrafficGreenDuration, 3f, 20f));
 
 							// 2. Время желтого света (Шаг: 0.05)
 							GUILayout.Label($"Время желтого света: {TrafficYellowDuration:F2}s");
 							float rawYellow = GUILayout.HorizontalSlider(TrafficYellowDuration, 0.25f, 2.00f);
 							TrafficYellowDuration = Mathf.Round(rawYellow / 0.05f) * 0.05f;
 							
-							_trafficOnlyOne = GUILayout.Toggle(_trafficOnlyOne, "Побеждает первый выполнивший задания");
-							
 							// 3. Время красного света (Шаг: 1)
 							GUILayout.Label($"Время красного света: {TrafficRedDuration:F0}s");
-							TrafficRedDuration = Mathf.Round(GUILayout.HorizontalSlider(TrafficRedDuration, 3f, 15f));
-
-							// 4. Задержка красного света (Шаг: 0.1)
-							GUILayout.Label($"Задержка активации красного: {TrafficRedDelay:F1}s");
-							float rawDelay = GUILayout.HorizontalSlider(TrafficRedDelay, 0.2f, 1.2f);
-							TrafficRedDelay = Mathf.Round(rawDelay / 0.1f) * 0.1f;
+							TrafficRedDuration = Mathf.Round(GUILayout.HorizontalSlider(TrafficRedDuration, 3f, 20f));
 							
 							GUILayout.Label($"Длительность матча: {TrafficMatchDuration:F0}s");
 							TrafficMatchDuration = GUILayout.HorizontalSlider(TrafficMatchDuration, 60f, 300f);
@@ -461,11 +476,12 @@ namespace MultiModeMod
 							}
 							else
 							{
+								SameTasks = GUILayout.Toggle(SameTasks, "У всех одинаковые задания");
 								GUILayout.Label($"Дистанция поимки: {CopsCatchDistance:F1}m");
-								CopsCatchDistance = GUILayout.HorizontalSlider(CopsCatchDistance, 0.5f, 2.0f);
+								CopsCatchDistance = GUILayout.HorizontalSlider(CopsCatchDistance, 0.5f, 1.5f);
 								
 								GUILayout.Label($"Перезарядка поимки: {CopsCatchCooldownDuration:F1}s");
-								CopsCatchCooldownDuration = Mathf.Round(GUILayout.HorizontalSlider(CopsCatchCooldownDuration, 0.5f, 1f) / 0.1f) * 0.1f;
+								CopsCatchCooldownDuration = Mathf.Round(GUILayout.HorizontalSlider(CopsCatchCooldownDuration, 0.5f, 2f) / 0.1f) * 0.1f;
 								
 								GUILayout.Label($"Количество копов: {CopsCount}");
 								CopsCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(CopsCount, 1f, 3f));
@@ -473,6 +489,13 @@ namespace MultiModeMod
 								GUILayout.Label($"Длительность матча: {CopsMatchDuration:F0}s");
 								CopsMatchDuration = Mathf.Round(GUILayout.HorizontalSlider(CopsMatchDuration, 60f, 300f) / 10f) * 10f;
 							}
+							break;
+						
+						case 9:
+							GUILayout.Label("<b>Забег На Скорость</b>");
+							GUILayout.Space(10);
+							GUILayout.Label($"Время на то чтобы добежать до комнаты: {RoomRushTimer}s");
+							RoomRushTimer = Mathf.RoundToInt(GUILayout.HorizontalSlider(RoomRushTimer, 10f, 45f));
 							break;
 
 						default:
@@ -523,7 +546,25 @@ namespace MultiModeMod
 						case 3:
 							GUILayout.Label("<b>Настройки прочее</b>");
 							GUILayout.Space(10);
+							GUILayout.Label("Дебаг инфо");
 							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {IsPlayerInRoom(PlayerControl.LocalPlayer)}");
+							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {HostRoom1SAgo()}");
+							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {PlayerControl.LocalPlayer.GetTruePosition()}");
+							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {HostPos1SAgo()}");
+							if (PlayerControl.LocalPlayer != null) GUILayout.Label($"{PlayerControl.LocalPlayer.Data.PlayerName}: {string.Join(", ", PlayerRooms(PlayerControl.LocalPlayer).Select(room => room.RoomId))}");
+							GUILayout.Space(10);
+							GUILayout.Label("Сохранение настроек режимов и прочее (В разработке...)");
+							GUILayout.BeginHorizontal();
+							if (GUILayout.Button("<b>Сохранить настройки</b>"))
+							{
+							}
+							if (GUILayout.Button("<b>Загрузить настройки</b>"))
+							{
+							}
+							GUILayout.EndHorizontal();
+							if (GUILayout.Button("<b>Отправить в чат правила выбранного режима</b>"))
+							{
+							}
 							break;
 
 						default:
@@ -550,7 +591,7 @@ namespace MultiModeMod
 				return result;
 			}
         }
-		private static readonly HashSet<(byte Map, SystemTypes Room)> Hallways = new()
+		public static readonly HashSet<(byte Map, SystemTypes Room)> Hallways = new()
 		{
 			(1, SystemTypes.Decontamination),
 			(1, SystemTypes.Balcony),
@@ -586,13 +627,67 @@ namespace MultiModeMod
 			}
 			return rooms;
 		}
+		private static bool IsInRange(PlayerControl p1, PlayerControl p2, float maxDistance)
+		{
+			if (p1 == null || p2 == null) return false;
+			if (p1.Data.IsDead || p2.Data.IsDead) return false;
+
+			// Проверяем вентиляции, лестницы и платформы
+			if (p1.inVent || p1.onLadder || p1.inMovingPlat ||
+				p2.inVent || p2.onLadder || p2.inMovingPlat)
+			{
+				return false;
+			}
+
+			// Определяем позицию для p1: если это мы, берем позицию 1 секунду назад, иначе текущую
+			Vector2 pos1;
+			if (p1 == PlayerControl.LocalPlayer)
+			{
+				pos1 = HostPos1SAgo(); // Ваш метод для позиции 1 секунду назад
+			}
+			else
+			{
+				pos1 = p1.GetTruePosition();
+			}
+
+			// Определяем позицию для p2: если это мы, берем позицию 1 секунду назад, иначе текущую
+			Vector2 pos2;
+			if (p2 == PlayerControl.LocalPlayer)
+			{
+				pos2 = HostPos1SAgo(); // Ваш метод для позиции 1 секунду назад
+			}
+			else
+			{
+				pos2 = p2.GetTruePosition();
+			}
+			
+			Vector2 vector = pos2 - pos1;
+			float magnitude = vector.magnitude;
+
+			// 1. Проверяем расстояние с учетом измененных позиций
+			if (magnitude > maxDistance) return false;
+
+			// 2. Проверяем стены через встроенный метод и маску Among Us
+			// (луч строится между полученными точками: текущей или старой)
+			bool hitWall = PhysicsHelpers.AnyNonTriggersBetween(pos1, vector.normalized, magnitude, Constants.ShipAndObjectsMask);
+			if (hitWall)
+			{
+				return false; // Между точками есть стена
+			}
+
+			return true;
+		}
+		public static Vector2 HostPos1SAgo() {return Coroutines.Instance.GetPosition05SecondsAgo(PlayerControl.LocalPlayer);}
+		public static bool HostRoom1SAgo() {return Coroutines.Instance.WasPlayerInRoom05SecondsAgo(PlayerControl.LocalPlayer);}
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.Update))]
         public static class UpdatePatch
         {
             public static void Postfix()
             {
-                if (Input.GetKeyDown(KeyCode.F3)) ShowMenu = !ShowMenu;
+				if (!Enum.TryParse(knopkaDlyaOtkritiyaMenuMMPuL.Value, true, out KeyCode keyCode)) keyCode = KeyCode.F3;
+
+				if (Input.GetKeyDown(keyCode)) ShowMenu = !ShowMenu;
 
 				if (MultiModePlugin.NeedToSnapHost)
 				{
@@ -649,6 +744,7 @@ namespace MultiModeMod
 					}
 					else
 					{
+						savedTasks = null;
 						IsSSPartySwapActive = false;
 						IsSSPartyActive = false;
 						IsChaosActive = false;
@@ -699,6 +795,8 @@ namespace MultiModeMod
 						IsInJail.Clear();
 						_copCatchCooldowns.Clear();
 						
+						RoomRushActive = false;
+						
 						TrackedColors.Clear();
 					}
                 }
@@ -744,9 +842,46 @@ namespace MultiModeMod
 		[HarmonyPatch(typeof(NetworkedPlayerInfo), nameof(NetworkedPlayerInfo.RpcSetTasks))]
 		public static class RpcSetTasksPatch
 		{
+			private static bool ShouldUseSameTasks() {return SameTasks && (GameModeTab == 2 || GameModeTab == 6 || GameModeTab == 8);}
+			
+			public static void Prefix(NetworkedPlayerInfo __instance, ref Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte> taskTypeIds)
+			{
+				if (__instance == null || !ShouldUseSameTasks())
+					return;
+
+				// Если задания первого игрока уже сохранены,
+				// подменяем массив для следующего игрока.
+				byte[] saved = savedTasks;
+
+				if (saved != null)
+				{
+					taskTypeIds = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte>(saved.Length);
+
+					for (int i = 0; i < saved.Length; i++)
+						taskTypeIds[i] = saved[i];
+				}
+			}
+			
 			public static void Postfix(NetworkedPlayerInfo __instance, Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte> taskTypeIds)
 			{
 				if (__instance == null) return;
+				
+				if (ShouldUseSameTasks())
+				{
+					// Сохраняем задания первого игрока.
+					if (savedTasks == null &&
+						taskTypeIds != null &&
+						taskTypeIds.Length > 0)
+					{
+						byte[] tasks = new byte[taskTypeIds.Length];
+
+						for (int i = 0; i < taskTypeIds.Length; i++)
+							tasks[i] = taskTypeIds[i];
+
+						savedTasks = (byte[])tasks.Clone();
+					}
+				}
+				
 				if (taskTypeIds == null || taskTypeIds.Length == 0) return;
 				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5)
 				{
@@ -777,7 +912,10 @@ namespace MultiModeMod
 					}
 					if (MiniGameSchoolActive)
 					{
-						if (IsPlayerInRoom(target))
+						bool isinroom = IsPlayerInRoom(target);
+						if (target == PlayerControl.LocalPlayer) isinroom = HostRoom1SAgo();
+						
+						if (isinroom)
 						{
 							if (!MiniGameSchoolFails.ContainsKey(__instance.PlayerId)) MiniGameSchoolFails[__instance.PlayerId] = 0;
 							MiniGameSchoolFails[__instance.PlayerId]++;
@@ -808,6 +946,7 @@ namespace MultiModeMod
 					target.RpcSetRole(RoleTypes.CrewmateGhost, true);
 					return false;
 				}
+				if (_zombieGameActive) return false;
 				return true;
 			}
 		}
@@ -825,7 +964,7 @@ namespace MultiModeMod
         {
             public static bool Prefix()
             {
-				if (GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8)
+				if (GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8 || GameModeTab == 9)
 				{
 					foreach (PlayerControl p in PlayerControl.AllPlayerControls)
 					{
@@ -899,7 +1038,7 @@ namespace MultiModeMod
 			public static void Postfix()
 			{
 				if (!AmongUsClient.Instance.AmHost || GameData.Instance == null) return;
-				
+				Coroutines.Instance.RecordPositionsRoutineStart(PlayerControl.LocalPlayer);
 				// Как только карта загрузилась и игра началась, намертво клонируем настройки лобби в бэкап
 				if (GameManager.Instance != null && GameManager.Instance.LogicOptions != null)
 				{
@@ -1027,6 +1166,10 @@ namespace MultiModeMod
 						}
 					}
 				}
+				else if (GameModeTab == 9)
+				{
+					Coroutines.Instance.CoRoomRushStart();
+				}
 			}
 		}
 
@@ -1143,16 +1286,7 @@ namespace MultiModeMod
 					// Проверяем контакт «Зомби (2) <-> Человек (10)»
 					if ((p1Color == 2 && p2Color == 10) || (p1Color == 10 && p2Color == 2))
 					{
-						// Проверяем, находится ли кто-то из них в вентиляции, на лестнице или платформе
-						// Если да — заражение невозможно, пропускаем эту пару игроков
-						if (p1.Object.inVent || p1.Object.onLadder || p1.Object.inMovingPlat ||
-						    p2.Object.inVent || p2.Object.onLadder || p2.Object.inMovingPlat)
-						{
-							continue; 
-						}
-
-						float dist = Vector2.Distance(p1.Object.transform.position, p2.Object.transform.position);
-						if (dist <= InfectionDistance)
+						if (IsInRange(p1.Object, p2.Object, InfectionDistance))
 						{
 							// Заражаем! Кто был голубым (10), становится зеленым (2)
 							if (p1Color == 10) SetPlayerColorSecure(p1.Object, 2);
@@ -1235,20 +1369,19 @@ namespace MultiModeMod
 						_playerWithPotatoId = target.PlayerId;
 						_firstPotatoSpawned = true;
 						_potatoDetonationTimer = 0f;
+						_potatoBlackWarningTriggered = false; // <-- НОВОЕ: сбрасываем флаг при спавне
 
 						SetPlayerColorSecure(target, 4); // Выдаем картошку — Оранжевый (4)
 						UnityEngine.Debug.Log($"[MMPuL] Первая картошка выдана: {target.Data.PlayerName}");
 					}
 				}
-				return; // Пока первая картошка не спавнилась, физику касаний не считаем
+				return; 
 			}
 
-			// 3. Логика удержания карточки и взрыва
 			// 3. Логика удержания карточки и взрыва
 			var currentPotatoPlayer = GameData.Instance.GetPlayerById(_playerWithPotatoId)?.Object;
 			
 			// --- ЗАЩИТА ОТ ВЫЛЕТА ИГРОКА С КАРТОШКОЙ ---
-			// Если игрок с картошкой вышел, отключился или его объект стёрся из памяти игры
 			if (currentPotatoPlayer == null || currentPotatoPlayer.Data == null || currentPotatoPlayer.Data.Disconnected)
 			{
 				UnityEngine.Debug.Log("[MMPuL] Игрок с картошкой вышел из игры! Ищем нового ведущего...");
@@ -1256,38 +1389,44 @@ namespace MultiModeMod
 				List<PlayerControl> remainingPlayers = new List<PlayerControl>();
 				foreach (var p in GameData.Instance.AllPlayers)
 				{
-					// Берем только тех, кто реально в игре, жив и не отключен
 					if (p != null && !p.IsDead && p.Object != null && !p.Disconnected && p.PlayerId != _playerWithPotatoId) 
 						remainingPlayers.Add(p.Object);
 				}
 
 				if (remainingPlayers.Count > 1)
 				{
-					// Передаем картошку случайному выжившему
 					int nextIndex = UnityEngine.Random.Range(0, remainingPlayers.Count);
 					PlayerControl nextTarget = remainingPlayers[nextIndex];
 
 					_playerWithPotatoId = nextTarget.PlayerId;
-					_potatoDetonationTimer = 0f; // Сбрасываем таймер взрыва, чтобы у нового игрока был честный шанс убежать
-					_potatoCooldownTimer = PotatoTransferCooldown; // Ставим задержку на передачу
+					_potatoDetonationTimer = 0f; 
+					_potatoCooldownTimer = PotatoTransferCooldown; 
+					_potatoBlackWarningTriggered = false; // <-- НОВОЕ: сбрасываем флаг
 
 					SetPlayerColorSecure(nextTarget, 4); // Красим в оранжевый
 					UnityEngine.Debug.Log($"[MMPuL] Новая картошка выдана игроку: {nextTarget.Data.PlayerName} взамен вылетевшего.");
 				}
 				else
 				{
-					// Если людей больше вообще не осталось — завершаем игру
 					_potatoGameActive = false;
 					Coroutines.Instance.CoEndGameStart(true, GM.HotPotato);
 				}
-				return; // Выходим из этого кадра Update, чтобы не выполнять код ниже
+				return; 
 			}
-			// 
-			// var currentPotatoPlayer = GameData.Instance.GetPlayerById(_playerWithPotatoId)?.Object;
 			
 			if (currentPotatoPlayer != null && !currentPotatoPlayer.Data.IsDead)
 			{
 				_potatoDetonationTimer += Time.deltaTime;
+
+				// --- НОВОЕ: Проверка на последние 3 секунды до взрыва ---
+				float timeRemaining = PotatoDetonationTime - _potatoDetonationTimer;
+				if (timeRemaining <= 3.0f && !_potatoBlackWarningTriggered)
+				{
+					_potatoBlackWarningTriggered = true;
+					SetPlayerColorSecure(currentPotatoPlayer, 6); // Меняем на чёрный (id 6)
+					UnityEngine.Debug.Log($"[MMPuL] Внимание! До взрыва 3 секунды, игрок {currentPotatoPlayer.Data.PlayerName} стал черным!");
+				}
+				// --------------------------------------------------------
 
 				// Взрыв игрока по истечении времени
 				if (_potatoDetonationTimer >= PotatoDetonationTime)
@@ -1295,7 +1434,7 @@ namespace MultiModeMod
 					UnityEngine.Debug.Log($"[MMPuL] Игрок {currentPotatoPlayer.Data.PlayerName} взорвался!");
 
 					currentPotatoPlayer.RpcSetRole(RoleTypes.CrewmateGhost, true);
-					// Ищем следующего живого игрока для передачи картошки
+					
 					List<PlayerControl> remainingPlayers = new List<PlayerControl>();
 					foreach (var p in GameData.Instance.AllPlayers)
 					{
@@ -1311,6 +1450,7 @@ namespace MultiModeMod
 						_playerWithPotatoId = nextTarget.PlayerId;
 						_potatoDetonationTimer = 0f;
 						_potatoCooldownTimer = PotatoTransferCooldown;
+						_potatoBlackWarningTriggered = false; // <-- НОВОЕ: сбрасываем флаг для следующего игрока
 
 						SetPlayerColorSecure(nextTarget, 4);
 					}
@@ -1322,29 +1462,23 @@ namespace MultiModeMod
 					return;
 				}
 
-				// 4. Передача картошки при касании (Оранжевый -> Голубой)
-				// Если кулдаун передачи активен — касания временно заблокированы
+				// 4. Передача картошки при касании (Оранжевый/Чёрный -> Голубой)
 				if (_potatoCooldownTimer <= 0f)
 				{
 					foreach (var p in GameData.Instance.AllPlayers)
 					{
 						if (p == null || p.IsDead || p.Object == null || p.PlayerId == _playerWithPotatoId) continue;
-
-						// Защита зон (вентиляции, лестницы)
-						if (currentPotatoPlayer.inVent || currentPotatoPlayer.onLadder || currentPotatoPlayer.inMovingPlat ||
-							p.Object.inVent || p.Object.onLadder || p.Object.inMovingPlat) continue;
-
-						float dist = Vector2.Distance(currentPotatoPlayer.transform.position, p.Object.transform.position);
-						if (dist <= PotatoTransferDistance)
+						
+						if (IsInRange(currentPotatoPlayer, p.Object, PotatoTransferDistance))
 						{
-							// Меняем владельца картошки
 							PlayerControl oldPotatoOwner = currentPotatoPlayer;
 							PlayerControl newPotatoOwner = p.Object;
 
 							_playerWithPotatoId = newPotatoOwner.PlayerId;
-							_potatoCooldownTimer = PotatoTransferCooldown; // Включаем задержку
-							// Таймер взрыва НЕ сбрасывается в ноль, а продолжает тикать дальше для азарта (или сбрось в 0f, если хочешь облегчить игру)
+							_potatoCooldownTimer = PotatoTransferCooldown; 
 							
+							_potatoBlackWarningTriggered = false; // <-- НОВОЕ: сбрасываем флаг при передаче, чтобы у нового игрока таймер шёл заново
+
 							SetPlayerColorSecure(oldPotatoOwner, 10); // Старый становится голубым
 							SetPlayerColorSecure(newPotatoOwner, 4);  // Новый становится оранжевым
 
@@ -1480,9 +1614,6 @@ namespace MultiModeMod
 				var p1 = allPlayers[i];
 				if (p1 == null || p1.Object == null || p1.IsDead) continue;
 
-				// Если игрок на лестнице, платформе или в венте — он недосягаем
-				if (p1.Object.inVent || p1.Object.onLadder || p1.Object.inMovingPlat) continue;
-
 				bool isP1Tagger = TaggerIds.Contains(p1.PlayerId);
 				int p1Color = GetPlayerColor(p1.Object);
 
@@ -1490,29 +1621,29 @@ namespace MultiModeMod
 				{
 					var p2 = allPlayers[j];
 					if (p2 == null || p2.Object == null || p2.IsDead) continue;
-					if (p2.Object.inVent || p2.Object.onLadder || p2.Object.inMovingPlat) continue;
 
 					bool isP2Tagger = TaggerIds.Contains(p2.PlayerId);
 					int p2Color = GetPlayerColor(p2.Object);
 
-					float dist = Vector2.Distance(p1.Object.transform.position, p2.Object.transform.position);
-					if (dist > FreezeDistance) continue;
-
 					// СИТУАЦИЯ А: Салка касается активного мирного (11) -> ЗАМОРОЗКА
 					if ((isP1Tagger && !isP2Tagger && p2Color == 11) || (isP2Tagger && !isP1Tagger && p1Color == 11))
 					{
-						var tagger = isP1Tagger ? p1 : p2;
-						var crew = isP1Tagger ? p2 : p1;
-
-						float cd = 0f;
-						PlayerCooldowns.TryGetValue(tagger.PlayerId, out cd);
-						
-						if (cd <= 0f)
+						// Проверяем дистанцию, стены и состояние (вентиляция/лестницы/платформы)
+						if (IsInRange(p1.Object, p2.Object, FreezeDistance))
 						{
-							SetPlayerColorSecure(crew.Object, 10); // Превращаем в ледышку (Голубой)
-							PlayerCooldowns[tagger.PlayerId] = TaggerFreezeCooldown; // Вешаем кулдаун на салку
-							FrozenTimers[crew.PlayerId] = 0f; // Сбрасываем таймер жизни во льду
-							UnityEngine.Debug.Log($"[MMPuL] {tagger.PlayerName} заморозил {crew.PlayerName}");
+							var tagger = isP1Tagger ? p1 : p2;
+							var crew = isP1Tagger ? p2 : p1;
+
+							float cd = 0f;
+							PlayerCooldowns.TryGetValue(tagger.PlayerId, out cd);
+							
+							if (cd <= 0f)
+							{
+								SetPlayerColorSecure(crew.Object, 10); // Превращаем в ледышку (Голубой)
+								PlayerCooldowns[tagger.PlayerId] = TaggerFreezeCooldown; // Кулдаун на салку
+								FrozenTimers[crew.PlayerId] = 0f; // Сбрасываем таймер жизни во льду
+								UnityEngine.Debug.Log($"[MMPuL] {tagger.PlayerName} заморозил {crew.PlayerName}");
+							}
 						}
 					}
 
@@ -1525,15 +1656,19 @@ namespace MultiModeMod
 						// Салки не могут размораживать
 						if (TaggerIds.Contains(helper.PlayerId)) continue; 
 
-						float cd = 0f;
-						PlayerCooldowns.TryGetValue(helper.PlayerId, out cd);
-
-						if (cd <= 0f)
+						// Проверяем дистанцию, стены и состояние для помощи
+						if (IsInRange(p1.Object, p2.Object, FreezeDistance))
 						{
-							SetPlayerColorSecure(frozen.Object, 11); // Размораживаем (обратно в Лайм)
-							PlayerCooldowns[helper.PlayerId] = CrewUnfreezeCooldown; // Вешаем кулдаун спасителю
-							FrozenTimers.Remove(frozen.PlayerId); // Удаляем из списка замерзающих
-							UnityEngine.Debug.Log($"[MMPuL] {helper.PlayerName} разморозил {frozen.PlayerName}");
+							float cd = 0f;
+							PlayerCooldowns.TryGetValue(helper.PlayerId, out cd);
+
+							if (cd <= 0f)
+							{
+								SetPlayerColorSecure(frozen.Object, 11); // Размораживаем (обратно в Лайм)
+								PlayerCooldowns[helper.PlayerId] = CrewUnfreezeCooldown; // Кулдаун спасителю
+								FrozenTimers.Remove(frozen.PlayerId); // Удаляем из списка замерзающих
+								UnityEngine.Debug.Log($"[MMPuL] {helper.PlayerName} разморозил {frozen.PlayerName}");
+							}
 						}
 					}
 				}
@@ -1709,7 +1844,7 @@ namespace MultiModeMod
 						if (Vector2.Distance(originalPos, currentPos) > 1.0f)
 						{
 							UnityEngine.Debug.Log($"[MMPuL] Игрок {p.PlayerName} двигался на красный свет!");
-							p.Object.RpcSetRole(RoleTypes.CrewmateGhost, false);
+							p.Object.RpcSetRole(RoleTypes.CrewmateGhost, true);
 						}
 					}
 				}
@@ -1841,32 +1976,38 @@ namespace MultiModeMod
 				{
 					if (p1 == p2 || p2 == null || p2.Object == null || p2.IsDead) continue;
 					int color2 = GetPlayerColor(p2.Object);
-					float dist = Vector2.Distance(p1.Object.transform.position, p2.Object.transform.position);
 
-					// Коп (1) ловит Преступника (6)
-					if (color1 == 1 && color2 == 6 && dist <= CopsCatchDistance)
+					// 1. Коп (1) ловит Преступника (6)
+					if (color1 == 1 && color2 == 6)
 					{
-						// Проверка задержки
-						float currentTime = Time.time;
-						float lastCatchTime = 0f;
-						
-						// Получаем время последней поимки этого копа
-						if (_copCatchCooldowns.ContainsKey(p1.PlayerId))
+						// Проверяем дистанцию, стены, вентиляции и лестницы
+						if (IsInRange(p1.Object, p2.Object, CopsCatchDistance))
 						{
-							lastCatchTime = _copCatchCooldowns[p1.PlayerId];
-						}
+							float currentTime = Time.time;
+							float lastCatchTime = 0f;
+							
+							// Получаем время последней поимки этого копа
+							if (_copCatchCooldowns.TryGetValue(p1.PlayerId, out lastCatchTime))
+							{
+								// Использован TryGetValue для более чистой работы со словарем
+							}
 
-						// Если прошло больше времени, чем CopsCatchCooldownDuration
-						if (currentTime - lastCatchTime >= CopsCatchCooldownDuration)
-						{
-							JailPlayer(p2.Object); // Ловим
-							_copCatchCooldowns[p1.PlayerId] = currentTime; // Обновляем время поимки
+							// Если прошло больше времени, чем CopsCatchCooldownDuration
+							if (currentTime - lastCatchTime >= CopsCatchCooldownDuration)
+							{
+								JailPlayer(p2.Object); // Ловим и сажаем в тюрьму
+								_copCatchCooldowns[p1.PlayerId] = currentTime; // Обновляем время поимки
+							}
 						}
 					}
-					// Преступник (6) спасает Преступника в тюрьме (5)
-					else if (color1 == 6 && color2 == 5 && dist <= 0.5f)
+					// 2. Преступник (6) спасает Преступника в тюрьме (5)
+					else if (color1 == 6 && color2 == 5)
 					{
-						UnjailPlayer(p2.Object);
+						// Проверяем дистанцию спасения (0.5f) и отсутствие стен между ними
+						if (IsInRange(p1.Object, p2.Object, 0.5f))
+						{
+							UnjailPlayer(p2.Object); // Освобождаем из тюрьмы
+						}
 					}
 				}
 			}
@@ -2057,7 +2198,7 @@ namespace MultiModeMod
 			public static bool Prefix()
 			{
 				// Если запущен наш кастомный режим — полностью отключаем ванильный подсчет побед
-				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8)
+				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8 || GameModeTab == 9)
 				{
 					return false;     // Пропускаем оригинальный метод
 				}
@@ -2091,7 +2232,7 @@ namespace MultiModeMod
 			public static bool Prefix()
 			{
 				// Если запущен наш кастомный режим — полностью отключаем ванильный подсчет побед
-				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8)
+				if (GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 8 || GameModeTab == 9)
 				{
 					return false;     // Пропускаем оригинальный метод
 				}
@@ -2135,7 +2276,7 @@ namespace MultiModeMod
 					Coroutines.Instance.CoSSPartyGhostBackStart();
 				}
 				// Если идет кастомная мини-игра, нажатие на Report просто игнорируется
-				if (MiniGameSchoolActive || MiniGameCloneActive || GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8)
+				if (MiniGameSchoolActive || MiniGameCloneActive || GameModeTab == 3 || GameModeTab == 4 || GameModeTab == 5 || GameModeTab == 6 || GameModeTab == 7 || GameModeTab == 8 || GameModeTab == 9)
 				{
 					return false; // Запретить репорт
 				}
@@ -2314,6 +2455,11 @@ namespace MultiModeMod
 			var color = new Color(1f, 1f, 1f);
 			switch (GameModeTab)
 			{
+				case 2:
+					__instance.TeamTitle.text = "Мини-игры";
+					color = new Color(1f, 0.4f, 0.4f);
+					break;
+				
 				case 3:
 					__instance.TeamTitle.text = "Зомби Режим";
 					color = new Color(0f, 0.80f, 0f);
@@ -2322,6 +2468,11 @@ namespace MultiModeMod
 				case 4:
 					__instance.TeamTitle.text = "<size=12>Горячая Картошка</size>";
 					color = new Color(1f, 0.65f, 0f);
+					break;
+				
+				case 5:
+					__instance.TeamTitle.text = "Заморозки";
+					color = new Color(0.65f, 1f, 1f);
 					break;
 
 				case 6:
@@ -2332,6 +2483,16 @@ namespace MultiModeMod
 				case 7:
 					__instance.TeamTitle.text = "<size=10>Каждый Сам За Себя</size>";
 					color = new Color(0f, 1f, 1f);
+					break;
+				
+				case 8:
+					__instance.TeamTitle.text = "<size=10>Копы и Преступники</size>";
+					color = new Color(0f, 0f, 1f);
+					break;
+				
+				case 9:
+					__instance.TeamTitle.text = "<size=10>Забег На Скорость</size>";
+					color = new Color(1f, 0.8f, 0.8f);
 					break;
 
 				default:
@@ -2564,6 +2725,16 @@ namespace MultiModeMod
 						batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
 					else
 						batch.QueueSetRole(player, RoleTypes.CrewmateGhost, true);
+				}
+				batch.FinishBatch();
+			}
+			if (gm == MultiModePlugin.GM.RoomRush)
+			{
+				BatchedMessage batch = new BatchedMessage();
+				foreach(PlayerControl player in ActivePlayers)
+				{
+					if (player == null || player.Data == null) continue;
+					batch.QueueSetRole(player, RoleTypes.ImpostorGhost, true);
 				}
 				batch.FinishBatch();
 			}
@@ -2836,6 +3007,385 @@ namespace MultiModeMod
 			p.RpcSetTasks(Array.Empty<byte>());
 			UnityEngine.Debug.Log($"[MMPuL] Задания очищены для {p.PlayerName}");
 		}
+		
+		// Храним очередь позиций для каждого игрока по его PlayerId
+		private static readonly Dictionary<byte, Queue<Vector2>> playerBuffers = new Dictionary<byte, Queue<Vector2>>();
+
+		// Вызывай этот метод при старте игры / появлении игрока
+		public void RecordPositionsRoutineStart(PlayerControl player)
+		{
+			if (player == null) return;
+			
+			byte id = player.PlayerId;
+			if (!playerBuffers.ContainsKey(id))
+			{
+				playerBuffers[id] = new Queue<Vector2>();
+				StartCoroutine(RecordPlayerRoutine(player).WrapToIl2Cpp());
+			}
+		}
+
+		private IEnumerator RecordPlayerRoutine(PlayerControl player)
+		{
+			int maxQueueSize = 10; // 0.5 секунд при шаге 0.05 сек (10 * 0.05 = 0.5)
+			byte id = player.PlayerId;
+
+			while (GameManager.Instance != null && AmongUsClient.Instance.GameState == AmongUsClient.GameStates.Started)
+			{
+				if (player != null && !player.Data.IsDead)
+				{
+					if (!playerBuffers.TryGetValue(id, out var buffer))
+					{
+						buffer = new Queue<Vector2>();
+						playerBuffers[id] = buffer;
+					}
+
+					buffer.Enqueue(player.GetTruePosition());
+
+					// Если накопилось больше 10 позиций, убираем самые старые из начала
+					if (buffer.Count > maxQueueSize)
+					{
+						buffer.Dequeue();
+					}
+				}
+
+				yield return new WaitForSeconds(0.05f);
+			}
+			
+			// Очищаем после окончания игры
+			playerBuffers.Remove(id);
+		}
+
+		/// <summary>
+		/// Возвращает позицию игрока 0.5 секунд назад (точно как твой метод HostPos1SAgo)
+		/// </summary>
+		public Vector2 GetPosition05SecondsAgo(PlayerControl player)
+		{
+			if (player == null) return Vector2.zero;
+
+			byte id = player.PlayerId;
+			if (playerBuffers.TryGetValue(id, out var buffer) && buffer.Count > 0)
+			{
+				// Peek() берет самый первый (самый старый) элемент из сохраненных 10 штук
+				return buffer.Peek();
+			}
+
+			// Если буфер еще пустой (прошло меньше 0.5 сек с начала матча), возвращаем текущую
+			return player.GetTruePosition();
+		}
+		/// <summary>
+		/// Проверяет, находился ли игрок в комнате 0.5 секунд назад
+		/// </summary>
+		public bool WasPlayerInRoom05SecondsAgo(PlayerControl player)
+		{
+			if (!player) return false;
+
+			// Убедимся, что трекинг запущен (на всякий случай)
+			RecordPositionsRoutineStart(player);
+
+			// Получаем прошлую позицию
+			Vector2 pastPosition = GetPosition05SecondsAgo(player);
+
+			// Проверяем комнаты по прошлой позиции
+			var rooms = RoomsAtPosition(pastPosition);
+			if (rooms.Count == 0) return false;
+
+			foreach (var room in rooms)
+			{
+				if (!room) continue;
+				if (room.RoomId is SystemTypes.Hallway) continue;
+
+				if (MultiModePlugin.Hallways.Contains((GameOptionsManager.Instance.CurrentGameOptions.MapId, room.RoomId))) continue;
+
+				return true;
+			}
+
+			return false;
+		}
+		
+		private static readonly Dictionary<byte, Dictionary<SystemTypes, byte>> MapRoomTaskIds = new()
+		{
+			// Skeld (0) & Dleks (3)
+			{ 0, new Dictionary<SystemTypes, byte> {
+				{ SystemTypes.Admin, 0 }, { SystemTypes.Weapons, 2 }, { SystemTypes.UpperEngine, 3 },
+				{ SystemTypes.MedBay, 5 }, { SystemTypes.Storage, 6 }, { SystemTypes.Reactor, 7 },
+				{ SystemTypes.LifeSupp, 8 }, { SystemTypes.Cafeteria, 9 }, { SystemTypes.Comms, 10 },
+				{ SystemTypes.Electrical, 11 }, { SystemTypes.Nav, 12 }, { SystemTypes.Shields, 18 }
+			}},
+			{ 3, new Dictionary<SystemTypes, byte> { // Dleks — аналог Skeld
+				{ SystemTypes.Admin, 0 }, { SystemTypes.Weapons, 2 }, { SystemTypes.UpperEngine, 3 },
+				{ SystemTypes.MedBay, 5 }, { SystemTypes.Storage, 6 }, { SystemTypes.Reactor, 7 },
+				{ SystemTypes.LifeSupp, 8 }, { SystemTypes.Cafeteria, 9 }, { SystemTypes.Comms, 10 },
+				{ SystemTypes.Electrical, 11 }, { SystemTypes.Nav, 12 }, { SystemTypes.Shields, 18 }
+			}},
+			// MIRA HQ (1)
+			{ 1, new Dictionary<SystemTypes, byte> {
+				{ SystemTypes.Admin, 1 }, { SystemTypes.MedBay, 2 }, { SystemTypes.Reactor, 4 },
+				{ SystemTypes.Storage, 10 }, { SystemTypes.Greenhouse, 14 }, { SystemTypes.Launchpad, 15 },
+				{ SystemTypes.Laboratory, 16 }, { SystemTypes.Cafeteria, 19 }, { SystemTypes.Balcony, 20 },
+				{ SystemTypes.Office, 23 }
+			}},
+			// Polus (2)
+			{ 2, new Dictionary<SystemTypes, byte> {
+				{ SystemTypes.Dropship, 1 }, { SystemTypes.Weapons, 4 }, { SystemTypes.Electrical, 6 },
+				{ SystemTypes.Specimens, 7 }, { SystemTypes.Storage, 10 }, { SystemTypes.BoilerRoom, 13 },
+				{ SystemTypes.Comms, 18 }, { SystemTypes.LifeSupp, 24 }
+			}},
+			// Airship (4)
+			{ 4, new Dictionary<SystemTypes, byte> {
+				{ SystemTypes.Electrical, 2 }, { SystemTypes.CargoBay, 9 }, { SystemTypes.MainHall, 11 },
+				{ SystemTypes.Security, 16 }, { SystemTypes.Lounge, 17 }, { SystemTypes.VaultRoom, 19 },
+				{ SystemTypes.Cockpit, 20 }, { SystemTypes.Armory, 21 }, { SystemTypes.Comms, 23 },
+				{ SystemTypes.Medical, 24 }, { SystemTypes.ViewingDeck, 25 }, { SystemTypes.Showers, 33 },
+				{ SystemTypes.Records, 36 }, { SystemTypes.Kitchen, 40 }
+			}},
+			// Fungle (5)
+			{ 5, new Dictionary<SystemTypes, byte> {
+				{ SystemTypes.Lookout, 1 }, { SystemTypes.FishingDock, 4 }, { SystemTypes.Greenhouse, 5 },
+				{ SystemTypes.UpperEngine, 6 }, { SystemTypes.MiningPit, 9 }, { SystemTypes.Storage, 11 },
+				{ SystemTypes.Laboratory, 13 }, { SystemTypes.Cafeteria, 17 }, { SystemTypes.Comms, 19 },
+				{ SystemTypes.SleepingQuarters, 23 }, { SystemTypes.Reactor, 26 }
+			}}
+		};
+
+		// Вспомогательный метод для определения комнат по координатам точки
+		public List<PlainShipRoom> RoomsAtPosition(Vector2 worldPosition)
+		{
+			var rooms = new List<PlainShipRoom>();
+			if (!ShipStatus.Instance) return rooms;
+
+			foreach (var room in ShipStatus.Instance.AllRooms)
+			{
+				var area = room.roomArea;
+				if (!area) continue;
+
+				if (area.OverlapPoint(worldPosition))
+				{
+					rooms.Add(room);
+				}
+			}
+			return rooms;
+		}
+		
+		public void ClearTaskForRoomRush()
+		{
+			BatchedMessage batch = new BatchedMessage();
+			foreach(PlayerControl player in PlayerControl.AllPlayerControls) {if (!player.Data.IsDead) {batch.QueueSetTasks(player.Data, new byte[] {});}} // голубой
+			batch.FinishBatch();
+		}
+		public void SetTaskForRoomRush(byte[] task)
+		{
+			BatchedMessage batch = new BatchedMessage();
+			foreach(PlayerControl player in PlayerControl.AllPlayerControls) {if (!player.Data.IsDead) {batch.QueueSetTasks(player.Data, task); batch.QueueSetColor(player, 10);}} // голубой
+			batch.FinishBatch();
+		}
+		
+		// Список живых игроков
+		public List<PlayerControl> ActivePlayers = new List<PlayerControl>();
+
+		// Получаем координаты игрока с учётом локального/удалённого игрока
+		private Vector2 GetPlayerPosition(PlayerControl player)
+		{
+			if (player == PlayerControl.LocalPlayer)
+			{
+				return MultiModePlugin.HostPos1SAgo(); // Метод для себя
+			}
+			return player.GetTruePosition(); // Для остальных
+		}
+
+		// Проверка, находится ли игрок в целевой комнате
+		private bool IsPlayerInTargetRoom(PlayerControl player, SystemTypes targetRoom)
+		{
+			Vector2 pos = GetPlayerPosition(player);
+			List<PlainShipRoom> rooms = RoomsAtPosition(pos);
+			if (player.inVent || player.onLadder || player.inMovingPlat) return false;
+			foreach (var room in rooms)
+			{
+				if (room != null && room.RoomId == targetRoom)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+		
+		public void CoRoomRushStart()
+		{
+			StartCoroutine(CoRoomRush().WrapToIl2Cpp());
+		}
+		private IEnumerator CoRoomRush()
+		{
+			yield return new WaitForSeconds(5f);
+			MultiModePlugin.RoomRushActive = true;
+			
+			// Ждём завершения интро
+			while (HudManager.Instance.IsIntroDisplayed)
+				yield return null;
+			
+			byte mapId = GameManager.Instance.LogicOptions.MapId;
+
+			if (!MapRoomTaskIds.ContainsKey(mapId))
+			{
+				UnityEngine.Debug.LogError($"[MMPuL] карта {mapId} не поддерживается");
+				yield break;
+			}
+
+			var availableRooms = MapRoomTaskIds[mapId];
+
+			// Инициализируем список активных (живых) игроков
+			ActivePlayers.Clear();
+			foreach (var player in PlayerControl.AllPlayerControls)
+			{
+				if (player != null && player.Data != null && !player.Data.IsDead && !player.Data.Disconnected)
+				{
+					ActivePlayers.Add(player);
+				}
+			}
+
+			List<SystemTypes> roomKeys = new List<SystemTypes>(availableRooms.Keys);
+
+			// --- ФИЛЬТРАЦИЯ СТАРТОВОЙ КОМНАТЫ ---
+			SystemTypes? forbiddenFirstRoom = null;
+			if (mapId == 0) forbiddenFirstRoom = SystemTypes.Cafeteria;      // Skeld
+			else if (mapId == 1) forbiddenFirstRoom = SystemTypes.Launchpad; // Mira HQ
+			else if (mapId == 2) forbiddenFirstRoom = SystemTypes.Dropship;  // Polus
+
+			// Выбираем первую комнату с учётом запрета
+			SystemTypes currentTargetRoom;
+			do
+			{
+				currentTargetRoom = roomKeys[UnityEngine.Random.Range(0, roomKeys.Count)];
+			}
+			while (forbiddenFirstRoom.HasValue && currentTargetRoom == forbiddenFirstRoom.Value && roomKeys.Count > 1);
+
+			while (MultiModePlugin.RoomRushActive && AmongUsClient.Instance.GameState == AmongUsClient.GameStates.Started)
+			{
+				// 1. Фильтрация отключившихся или умерших игроков
+				ActivePlayers.RemoveAll(p => p == null || p.Data == null || p.Data.IsDead || p.Data.Disconnected);
+
+				// Проверка условий окончания игры на старте раунда
+				if (ActivePlayers.Count <= 1)
+				{
+					break;
+				}
+
+				// Выбираем новую случайную комнату, отличую от предыдущей (если есть выбор)
+				SystemTypes nextRoom = currentTargetRoom;
+				if (roomKeys.Count > 1)
+				{
+					do
+					{
+						nextRoom = roomKeys[UnityEngine.Random.Range(0, roomKeys.Count)];
+					} while (nextRoom == currentTargetRoom);
+				}
+				currentTargetRoom = nextRoom;
+
+				byte taskId = availableRooms[currentTargetRoom];
+
+				// Устанавливаем задание всем активным игрокам и красим их в голубой (10)
+				ClearTaskForRoomRush();
+				yield return new WaitForSeconds(0.12f);
+				SetTaskForRoomRush(new byte[] { taskId });
+
+				List<PlayerControl> reachedPlayers = new List<PlayerControl>();
+				float timer = MultiModePlugin.RoomRushTimer;
+				
+				// Рассчитываем, сколько человек могут спастись в этом раунде (все кроме одного!)
+				int maxAllowedToSave = ActivePlayers.Count - 1;
+
+				// --- РАУНД ---
+				while (timer > 0f && MultiModePlugin.RoomRushActive && AmongUsClient.Instance.GameState == AmongUsClient.GameStates.Started)
+				{
+					timer -= Time.deltaTime;
+
+					for (int i = ActivePlayers.Count - 1; i >= 0; i--)
+					{
+						var player = ActivePlayers[i];
+
+						if (player == null || player.Data == null || player.Data.IsDead || player.Data.Disconnected)
+						{
+							ActivePlayers.RemoveAt(i);
+							continue;
+						}
+
+						bool isInRoom = IsPlayerInTargetRoom(player, currentTargetRoom);
+						bool isAlreadySaved = reachedPlayers.Contains(player);
+
+						// --- 1. ИГРОК ВОШЁЛ В КОМНАТУ ---
+						if (isInRoom && !isAlreadySaved)
+						{
+							// Проверяем, есть ли ещё свободные места
+							if (reachedPlayers.Count < maxAllowedToSave)
+							{
+								reachedPlayers.Add(player);
+								player.RpcSetColor(11);
+							}
+						}
+						// --- 2. ИГРОК ВЫШЕЛ ИЗ КОМНАТЫ ---
+						else if (!isInRoom && isAlreadySaved)
+						{
+							reachedPlayers.Remove(player);
+							player.RpcSetColor(10);
+						}
+					}
+
+					if (ActivePlayers.Count <= 1)
+					{
+						break;
+					}
+
+					// Раунд завершается досрочно ТОЛЬКО если все спасительные места заняты И все эти игроки прямо сейчас стоят в комнате
+					if (reachedPlayers.Count >= maxAllowedToSave && maxAllowedToSave > 0)
+					{
+						yield return new WaitForSeconds(0.25f);
+						
+						// Финальная перепроверка: если кто-то выбежал за эти 0.3 сек, раунд продолжается
+						if (reachedPlayers.Count >= maxAllowedToSave)
+						{
+							break;
+						}
+					}
+
+					yield return null;
+				}
+				
+				if (ActivePlayers.Count <= 1)
+				{
+					break;
+				}
+				// --- ИТОГИ РАУНДА ---
+
+				// Игроки, которые НЕ успели добежать вовремя
+				List<PlayerControl> failedPlayers = new List<PlayerControl>();
+				foreach (var player in ActivePlayers)
+				{
+					if (!reachedPlayers.Contains(player))
+					{
+						failedPlayers.Add(player);
+					}
+				}
+
+				// Обработка опоздавших (смерть)
+				foreach (var player in failedPlayers)
+				{
+					// Превращаем игрока в призрака / убиваем
+					player.RpcSetRole(RoleTypes.CrewmateGhost, false);
+					ActivePlayers.Remove(player);
+				}
+
+				// Небольшая пауза между раундами
+				yield return new WaitForSeconds(0.75f);
+			}
+
+			// --- ФИНАЛ ИГРЫ ---
+			MultiModePlugin.RoomRushActive = false;
+
+			// Очищаем от умерших перед подсчётом победы
+			ActivePlayers.RemoveAll(p => p == null || p.Data == null || p.Data.IsDead || p.Data.Disconnected);
+
+			if (ActivePlayers.Count == 1) UnityEngine.Debug.Log($"[MMPuL] Победитель: {ActivePlayers[0].Data.PlayerName}");
+			else UnityEngine.Debug.Log("[MMPuL] Никто не выжил.");
+			Coroutines.Instance.CoEndGameStart(true, MultiModePlugin.GM.RoomRush);
+		}
 	}
 	public class BatchedMessage
 	{
@@ -2879,6 +3429,27 @@ namespace MultiModeMod
 			writer.Write((byte)RpcCalls.Shapeshift);
 			writer.WriteNetObject(target);
 			writer.Write(shouldAnimate);
+			writer.EndMessage();
+		}
+		
+		public void QueueSetTasks(NetworkedPlayerInfo player, byte[] tasks)
+		{
+			player.SetTasks(tasks);
+			writer.StartMessage((byte)GameDataTypes.RpcFlag);
+			writer.WritePacked(player.NetId);
+			writer.Write((byte)RpcCalls.SetTasks);
+			writer.WriteBytesAndSize(tasks);
+			writer.EndMessage();
+		}
+		
+		public void QueueSetColor(PlayerControl source, byte color)
+		{
+			source.SetColor(color);
+			writer.StartMessage((byte)GameDataTypes.RpcFlag);
+			writer.WritePacked(source.NetId);
+			writer.Write((byte)RpcCalls.SetColor);
+			writer.Write(source.Data.NetId);
+			writer.Write(color);
 			writer.EndMessage();
 		}
 		
